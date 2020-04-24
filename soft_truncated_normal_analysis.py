@@ -28,7 +28,7 @@ import matplotlib.cm as cm
 
 from read_dataset_for_constraint import switch_dataset
 
-from utils import plot_hyperrectangles, plot_pdfR, plot_pdf_hyperrectangles
+from utils import plot_boundary
 
 np.set_printoptions(precision=5)
 tfd = tfp.distributions
@@ -41,7 +41,7 @@ print("TensorFlow version: {}".format(tf.__version__))
 print("Eager execution: {}".format(tf.executing_eagerly()))
 
 
-n_components = 2
+n_components = 1
 
 save_loss = []
 #np.random.seed(903604963)
@@ -244,7 +244,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 				black_box_model.predict(x)
 				),
 			samples = X,
-			log_prob = model.log_pdf,
+			log_prob = self.log_pdf,
 			   use_reparameterization= False
 		)
 
@@ -295,21 +295,21 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 
 
 
-def compute_responsibilities(X, y, model):
+	def compute_responsibilities(self, X, y):
 
-	responsibilities = np.array(
-		np.zeros(
-			shape=(model.n_classes, X.shape[0], model.n_components)
-			).astype(np.float32)
-		)
+			responsibilities = np.array(
+				np.zeros(
+					shape=(self.n_classes, X.shape[0], self.n_components)
+					).astype(np.float32)
+				)
 
-	y_unique = np.unique(y)
+			#y_unique = np.unique(y)
 
-	for c in y_unique:
-		responsibilities[c] = softmax(model.compute_log_pdf(X, c), axis = 1)
+			for c in self.y_unique:
+				responsibilities[c] = tf.nn.softmax(self.compute_log_pdf(X, c), axis = 1).numpy()
 
 
-	return responsibilities
+			return responsibilities
 
 
 print("TensorFlow version: {}".format(tf.__version__))
@@ -322,7 +322,7 @@ if_pca = False
 
 X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map = \
     switch_dataset(dataset_name)(if_PCA = if_pca)
-model = SoftTruncatedGaussianMixtureAnalysis(n_components = 2, data_dim = X_train.shape[1],
+model = SoftTruncatedGaussianMixtureAnalysis(n_components = n_components, data_dim = X_train.shape[1],
 											 n_classes = len(np.unique(y_train))
 											 )
 model.gmm_initialisation(X_train, y_train.astype(np.int32))
@@ -331,15 +331,15 @@ optimizer = tf.optimizers.Adam(lr = 0.001)
 
 @tf.function
 def train_step(data, labels, responsibilities, eta):
-	model.eta.assign(eta)
-	#tf.print("toto", labels)
-	with tf.GradientTape() as tape:
-		current_loss = model(data, labels, responsibilities)
+ 	model.eta.assign(eta)
+ 	#tf.print("toto", labels)
+ 	with tf.GradientTape() as tape:
+		 current_loss = model(data, labels, responsibilities)
 
-	gradients = tape.gradient(current_loss, model.trainable_variables)
-	optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+ 	gradients = tape.gradient(current_loss, model.trainable_variables)
+ 	optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
-	return current_loss, responsibilities, gradients
+ 	return current_loss, responsibilities, gradients
 
 
 lloss= {}
@@ -355,40 +355,48 @@ directory = f"{directory}/value_{eta}"
 os.makedirs(directory, exist_ok = True)
 for i in range(50):
     #Expectation step
-	if type_eta == "eta_variant":
-		eta = (0.5)*np.sqrt(i) + 10
+ 	if type_eta == "eta_variant":
+		 eta = (0.5)*np.sqrt(i) + 10
 
 
 
-	filename = f"{directory}/image"
+ 	filename = f"{directory}/image"
     #print(probs_x_given_k.shape)
-	responsibilities = compute_responsibilities(X_train, y_train.astype(np.int32), model)
+ 	responsibilities = model.compute_responsibilities(X_train, y_train.astype(np.int32))
 # 	plot_pdf_hyperrectangles(X_train, y_train.astype(np.int32), 0, 1, model.lower.numpy(), model.upper.numpy(),
 #                           nb_hyperrectangles = model.n_components,
 #                           file_name = f"{filename}_rectangles_{i}.png",
 #                           color_map = color_map, mu = model.mu.numpy())
 
-	    #print(responsabilities)
+ 	    #print(responsabilities)
     #print(pi, probs_x_given_k)
 
     #Maximization
-	lloss[i] = []
+ 	lloss[i] = []
 
-	for j in range(100):
+ 	for j in range(100):
 
-		loss, resp, grad = train_step(data = X_train, labels = y_train.astype(np.int32),
+		 loss, resp, grad = train_step(data = X_train, labels = y_train.astype(np.int32),
 								responsibilities = responsibilities, eta = eta)
-		loss, resp = loss.numpy(), resp.numpy()
-		lloss[i].append(loss)
+		 loss, resp = loss.numpy(), resp.numpy()
+		 lloss[i].append(loss)
 
-	save_loss.append(loss)
+ 	save_loss.append(loss)
 
-	if np.abs(loss1 - loss) < tol:
-		break
-	else:
-		diff.append(loss1-loss)
-		loss1 = loss
-	print(f"Iteration: {i}, loss: {loss}")
+ 	if np.abs(loss1 - loss) < tol:
+		 break
+ 	else:
+		 diff.append(loss1-loss)
+		 loss1 = loss
+ 	print(f"Iteration: {i}, loss: {loss}")
 #    plot_pdfR(X_train[:,0], X_train[:,1], f"{filename}_density_{i}.png", model, color_map)
 
-
+plot_boundary(X = X_train,
+						   y = y_train,
+						   x_axis= 0,
+						   y_axis= 1,
+						   color_map= color_map,
+						   file_name = f"stgma_{n_components}.png",
+						   rect = True,
+						   model = model,
+						   steps = 100)

@@ -14,6 +14,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from scipy.special import softmax
 
+plt.rcParams["figure.figsize"] = (10,10)
 
 
 def plot_hyperrectangles(X, y, x_axis, y_axis, lower, upper, nb_hyperrectangles, file_name, color_map, mu):
@@ -53,6 +54,7 @@ def plot_pdfR(X, Y, filename, model, color_map):
 
 	values = np.vstack([x, y])
 	predictions = model.compute_pdf(positions.T).numpy()
+	print("False")
 	pred1 = predictions[:,0]
 	pred2 = predictions[:,1]
 	f1 = np.reshape(pred1.T, xx.shape)
@@ -85,6 +87,124 @@ def plot_pdfR(X, Y, filename, model, color_map):
 	plt.savefig(filename)
 	plt.close(fig)
 	plt.clf()
+
+
+
+
+def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA, black_box, steps=1000):
+
+	X1 = X[:,0]
+	X2 = X[:,1]
+
+	# Define region of interest by data limits
+	deltaX = (max(X1) - min(X1))/10
+	deltaY = (max(X2) - min(X2))/10
+
+	xmin, xmax = min(X1) - deltaX, max(X1) + deltaX
+	ymin, ymax = min(X2) - deltaY, max(X2) + deltaY
+
+	x_span = np.linspace(xmin, xmax, steps)
+	y_span = np.linspace(ymin, ymax, steps)
+	xx, yy = np.meshgrid(x_span, y_span)
+
+	# Make predictions across region of interest
+	labels_bb = black_box.predict(np.c_[xx.ravel(), yy.ravel()])
+	labels_bb = np.argmax(labels_bb, axis = 1)
+
+	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
+	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
+
+	#Decision boundary sTGMA
+	plt.subplot(2, 1, 1)
+	z1 = labels_stgma.reshape(xx.shape)
+	plt.contourf(xx, yy, z1, alpha=0.5)
+	plt.scatter(X1, X2, c = [color_map[y[i]] for i in range(X.shape[0])],  edgecolor='k', lw=0, cmap="Set1")
+	currentAxis = plt.gca()
+	for c in range(len(sTGMA.y_unique)):
+		for i in range(sTGMA.n_components):
+			low = sTGMA.lower[c,i].numpy()
+
+			upp = sTGMA.upper[c,i].numpy()
+
+			currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
+	                                    edgecolor=color_map[c], alpha=1))
+# 			plt.scatter(*mu[i,[x_axis, y_axis]], marker='^')
+	plt.title("sTGMA")
+
+
+	#Decision boundary ANN
+	plt.subplot(2, 1, 2)
+	z2 = labels_bb.reshape(xx.shape)
+	plt.contourf(xx, yy, z2, alpha=0.5)
+	plt.scatter(X1, X2, c = [color_map[y[i]] for i in range(X.shape[0])],  edgecolor='k', lw=0, cmap="Set1")
+	plt.title("ANN")
+	print("toto************************", file_name)
+	plt.savefig(file_name, dpi=150)
+	plt.clf()
+
+def plot_boundary(X, y, x_axis, y_axis, file_name, color_map, model, rect = False, steps=1000):
+
+	X1 = X[:,0]
+	X2 = X[:,1]
+
+	# Define region of interest by data limits
+	deltaX = (max(X1) - min(X1))/10
+	deltaY = (max(X2) - min(X2))/10
+
+	xmin, xmax = min(X1) - deltaX, max(X1) + deltaX
+	ymin, ymax = min(X2) - deltaY, max(X2) + deltaY
+
+	x_span = np.linspace(xmin, xmax, steps)
+	y_span = np.linspace(ymin, ymax, steps)
+	xx, yy = np.meshgrid(x_span, y_span)
+
+	# Make predictions across region of interest
+	labels_model = model.predict(np.c_[xx.ravel(), yy.ravel()])
+	if len(labels_model.shape) == 2:
+		labels_model = np.argmax(labels_model, axis = 1)
+
+	#Decision boundary sTGMA
+	z1 = labels_model.reshape(xx.shape)
+	plt.contourf(xx, yy, z1, alpha=0.5)
+	plt.scatter(X1, X2, c = [color_map[y[i]] for i in range(X.shape[0])],  edgecolor='k', lw=0, cmap="Set1")
+	if rect:
+		currentAxis = plt.gca()
+		for c in range(len(model.y_unique)):
+			for i in range(model.n_components):
+				low = model.lower[c,i].numpy()
+
+				upp = model.upper[c,i].numpy()
+
+				currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
+		                                    edgecolor=color_map[c], alpha=1))
+# 			plt.scatter(*mu[i,[x_axis, y_axis]], marker='^')
+	plt.title("Decision Boundary")
+
+
+	#Decision boundary ANN
+	plt.savefig(file_name, dpi=150)
+	plt.clf()
+
+def plot_pdf_hyperrectangles(X, Y, x_axis, y_axis, lower, upper, nb_hyperrectangles, file_name, color_map, mu):
+
+
+	currentAxis = plt.gca()
+	y_unique = np.unique(Y)
+	for c in range(len(y_unique)):
+		for i in range(nb_hyperrectangles):
+			low = lower[c,i]
+
+			upp = upper[c,i]
+
+			currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
+	                                    edgecolor=color_map[i], alpha=1))
+			plt.scatter(*mu[c,i,[x_axis, y_axis]], marker='^')
+
+	plt.scatter(X[:,x_axis], X[:,y_axis], color=[color_map[i] for i in Y])
+	plt.savefig(file_name, dpi = 150)
+	plt.clf()
+
+
 # =============================================================================
 # 	X, Y = np.meshgrid(X, Y)
 #
