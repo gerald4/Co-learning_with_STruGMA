@@ -24,8 +24,7 @@ class BlackBoxNN(tf.keras.Model):
 
 
 	def share_loss(self, X, sTGMA):
-		kl = tf.keras.losses.KLDivergence(
-		reduction=tf.keras.losses.Reduction.SUM)
+		kl = tf.keras.losses.KLDivergence()
 
 		def kl_divergence(x):
 			return kl(

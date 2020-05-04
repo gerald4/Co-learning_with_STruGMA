@@ -28,7 +28,7 @@ import matplotlib.cm as cm
 
 from read_dataset_for_constraint import switch_dataset
 
-from utils import plot_boundary
+from utils import plot_boundary, plot_pdf_hyperrectangles
 
 np.set_printoptions(precision=5)
 tfd = tfp.distributions
@@ -41,7 +41,7 @@ print("TensorFlow version: {}".format(tf.__version__))
 print("Eager execution: {}".format(tf.executing_eagerly()))
 
 
-n_components = 1
+n_components = 2
 
 save_loss = []
 #np.random.seed(903604963)
@@ -111,6 +111,8 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 		self.logits_y = tf.Variable(np.random.randn(self.n_classes
 											  ),
 			dtype = tf.float32,  name= "logits_y", trainable = False)
+
+		self.theta = tf.Variable(0.001, name = "smallest_margin", trainable = False)
 
 
 	def gmm_initialisation(self, X_train, y_train):
@@ -290,6 +292,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 
 
         #New losss:
+		#	tf.print(list_likelihood)
 		return - tf.reduce_sum(list_likelihood)
 
 
@@ -331,20 +334,29 @@ optimizer = tf.optimizers.Adam(lr = 0.001)
 
 @tf.function
 def train_step(data, labels, responsibilities, eta):
- 	model.eta.assign(eta)
+	model.eta.assign(eta)
  	#tf.print("toto", labels)
- 	with tf.GradientTape() as tape:
-		 current_loss = model(data, labels, responsibilities)
+	with tf.GradientTape() as tape:
+		current_loss = model(data, labels, responsibilities)
 
- 	gradients = tape.gradient(current_loss, model.trainable_variables)
- 	optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+	gradients = tape.gradient(current_loss, model.trainable_variables)
+	optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+	#Projected gradients
+	val = tf.where(tf.less(model.lower + model.theta, model.upper),
+				 model.lower, (0.5)*(model.upper + model.lower - model.theta))
 
- 	return current_loss, responsibilities, gradients
+	model.lower.assign(val)
+	val = tf.where(tf.less(model.lower + model.theta, model.upper),
+				 model.upper, (0.5)*(model.upper + model.lower + model.theta))
+
+	model.upper.assign(val)
+
+	return current_loss, responsibilities, gradients
 
 
 lloss= {}
-eta = 20
-tol = 0.002
+eta = 40
+tol = 0.01
 loss1 = 100.0
 diff = []
 directory = f"./images_sTGMA/datasets/{dataset_name}/{type_eta}"
@@ -363,19 +375,19 @@ for i in range(50):
  	filename = f"{directory}/image"
     #print(probs_x_given_k.shape)
  	responsibilities = model.compute_responsibilities(X_train, y_train.astype(np.int32))
-# 	plot_pdf_hyperrectangles(X_train, y_train.astype(np.int32), 0, 1, model.lower.numpy(), model.upper.numpy(),
-#                           nb_hyperrectangles = model.n_components,
-#                           file_name = f"{filename}_rectangles_{i}.png",
-#                           color_map = color_map, mu = model.mu.numpy())
+ 	plot_pdf_hyperrectangles(X_train, y_train.astype(np.int32), 0, 1, model.lower.numpy(), model.upper.numpy(),
+                          nb_hyperrectangles = model.n_components,
+                          file_name = f"{filename}_rectangles_{i}.png",
+                          color_map = color_map, mu = model.mu.numpy())
 
- 	    #print(responsabilities)
+ 	# print(responsabilities)
     #print(pi, probs_x_given_k)
 
     #Maximization
  	lloss[i] = []
 
  	for j in range(100):
-
+		 #print(f'Subiter {j}')
 		 loss, resp, grad = train_step(data = X_train, labels = y_train.astype(np.int32),
 								responsibilities = responsibilities, eta = eta)
 		 loss, resp = loss.numpy(), resp.numpy()
@@ -383,7 +395,8 @@ for i in range(50):
 
  	save_loss.append(loss)
 
- 	if np.abs(loss1 - loss) < tol:
+	#Early stopping
+ 	if np.abs(loss1 - loss)/loss < tol or loss <= 0.1:
 		 break
  	else:
 		 diff.append(loss1-loss)

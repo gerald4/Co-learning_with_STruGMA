@@ -60,7 +60,8 @@ def preprocess(data, dataset_name, random_state = 111, if_PCA = False, use_class
 		X_val = pca.transform(X_val)[:,0:2].astype(np.float32)
 
 
-	color_map = {-1: (1, 1, 1), 0: (0, 0, .9), 1: (1, 0, 0), 2: (.8, .6, 0), 3: (.5, .5, 0)}
+	color_map = {-1: (1, 1, 1), 0: "blue", 1: "red", 2: "green", 3: "yellow", 4: "orange", 5: "purple",
+			6: "brown", 7: "pink", 8: "gray", 9: "olive", 10: "cyan" }
 
 	return X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map
 

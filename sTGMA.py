@@ -87,6 +87,8 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 											  ),
 			dtype = tf.float32,  name= "logits_y", trainable = False)
 
+		self.theta = tf.Variable(0.001, name = "smallest_margin", trainable = False)
+
 
 	def gmm_initialisation(self, X_train, y_train):
 		"""This function intialises our STGMA using gaussian mixture model
@@ -228,7 +230,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 
 
 	def sample_directly(self, nb_samples):
-		@tf.function
+		@tf.function #(experimental_compile=True)
 		def run_chain(num_results, num_burnin_steps, current_state, kernel_type):
 			# Run the chain (with burn-in).
 		    samples, is_accepted = tfp.mcmc.sample_chain(

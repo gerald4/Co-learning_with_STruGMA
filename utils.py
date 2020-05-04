@@ -36,7 +36,7 @@ def plot_hyperrectangles(X, y, x_axis, y_axis, lower, upper, nb_hyperrectangles,
 	plt.savefig(file_name, dpi = 150)
 	plt.clf()
 
-def plot_pdfR(X, Y, filename, model, color_map):
+def plot_pdfR(X, Y, filename, model, color_map, labels = None, n_components= 2):
 
 	x = X
 	y = Y
@@ -54,36 +54,40 @@ def plot_pdfR(X, Y, filename, model, color_map):
 
 	values = np.vstack([x, y])
 	predictions = model.compute_pdf(positions.T).numpy()
-	print("False")
-	pred1 = predictions[:,0]
-	pred2 = predictions[:,1]
-	f1 = np.reshape(pred1.T, xx.shape)
-	f2 = np.reshape(pred2.T, xx.shape)
 
 
-	alpha = softmax(model.logits_k.numpy())
+# 	cfset = ax.contourf(xx, yy, f2, cmap='BuGn', alpha = alpha[1])
+# 	cset = ax.contour(xx, yy, f2, colors='k')
+# 	ax.clabel(cset, inline=1, fontsize=10)
+
 	fig = plt.figure(figsize=(10,10))
-	ax = fig.gca()
-	ax.set_xlim(xmin, xmax)
-	ax.set_ylim(ymin, ymax)
-	cfset = ax.contourf(xx, yy, f1, cmap='BuGn', alpha = alpha[0])
-	# ax.imshow(np.rot90(f1), cmap='BuGn', extent=[xmin, xmax, ymin, ymax])
-	cset1 = ax.contour(xx, yy, f1, colors='k')
-	ax.clabel(cset1, inline=1, fontsize=10)
-
-	cfset = ax.contourf(xx, yy, f2, cmap='BuGn', alpha = alpha[1])
-	cset = ax.contour(xx, yy, f2, colors='k')
-	ax.clabel(cset, inline=1, fontsize=10)
-	currentAxis = plt.gca()
 	currentAxis = plt.gca()
 	x_axis = 0
 	y_axis = 1
-	for i in range(2):
-	    low = model.lower.numpy()[i]
-	    upp = model.upper.numpy()[i]
-	    currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
+	for i in range(n_components):
+
+		pred1 = predictions[:,i]
+		f1 = np.reshape(pred1.T, xx.shape)
+
+
+		alpha = softmax(model.logits_k.numpy())
+
+		ax = fig.gca()
+		ax.set_xlim(xmin, xmax)
+		ax.set_ylim(ymin, ymax)
+		cfset = ax.contourf(xx, yy, f1, cmap='BuGn', alpha = alpha[i])
+		# ax.imshow(np.rot90(f1), cmap='BuGn', extent=[xmin, xmax, ymin, ymax])
+		cset1 = ax.contour(xx, yy, f1, colors='k', alpha= alpha[i])
+		ax.clabel(cset1, inline=1, fontsize=10)
+
+		low = model.lower.numpy()[i]
+		upp = model.upper.numpy()[i]
+		currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
 	                                    edgecolor=color_map[i], alpha=1))
-	    plt.scatter(*model.mu.numpy()[i,[x_axis, y_axis]], marker='^')
+		plt.scatter(*model.mu.numpy()[i,[x_axis, y_axis]], marker='^')
+
+	if labels is not None:
+		plt.scatter(X, Y, c = [color_map[labels[i]] for i in range(X.shape[0])], alpha = 0.5)
 	plt.savefig(filename)
 	plt.close(fig)
 	plt.clf()
@@ -108,7 +112,7 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 	xx, yy = np.meshgrid(x_span, y_span)
 
 	# Make predictions across region of interest
-	labels_bb = black_box.predict(np.c_[xx.ravel(), yy.ravel()])
+	labels_bb = black_box(np.c_[xx.ravel(), yy.ravel()])
 	labels_bb = np.argmax(labels_bb, axis = 1)
 
 	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
