@@ -74,11 +74,11 @@ def train_step_sTGMA(data, labels, responsibilities, eta, samples):
 
 
 @tf.function
-def train_step_black_box(data, labels_one_hot, samples):
+def train_step_black_box(data, labels_one_hot, samples, weights = None):
 	cross_ent = tf.keras.losses.CategoricalCrossentropy()
 	with tf.GradientTape() as tape:
 
-		share_loss = black_box.share_loss(X = samples,  sTGMA = model )
+		share_loss = black_box.share_loss(X = samples,  sTGMA = model , weights = weights)
 		cross_entropy = cross_ent(labels_one_hot, black_box(data))
 
 		loss = cross_entropy + share_loss
@@ -92,7 +92,7 @@ def train_step_black_box(data, labels_one_hot, samples):
 
 
 if __name__== "__main__":
-	dataset_name = "wdbc"
+	dataset_name = "data1"
 	type_eta = "eta_constant"
 	if_pca = False
 
@@ -123,7 +123,7 @@ if __name__== "__main__":
 	save_share_loss1 = []
 	save_share_loss2 = []
 	diff = []
-	directory = f"images_cotraining/datasets/{dataset_name}/components_{n_components}/boundaries"
+	directory = f"images_cotraining/datasets/{dataset_name}/components_{n_components}/boundaries_importance"
 
 
 	# directory = f"{directory}/value_{eta}"
@@ -142,16 +142,18 @@ if __name__== "__main__":
 
 	    #Maximization
 		print("Sampling ...")
-		samples = model.sample_directly(nb_samples = 500).numpy()
-
+		#samples = model.sample_directly(nb_samples = 500).numpy()
+		samples, weights = model.sample_importance(nb_samples = 1000)
+		print(weights)
 
 		exp_log_lik_loss[i] = []
 
 		#Learning black-box model
 		for j in range(10):
-
+			print(f"Black-box update iteration {j}")
 			loss1, share_loss1, grad = train_step_black_box(data = X_train,
-													  labels_one_hot = y_train_onehot, samples = samples)
+													  labels_one_hot = y_train_onehot, samples = samples,
+													  weights = weights)
 			loss1, share_loss1 = loss1.numpy(), share_loss1.numpy()
 
 		save_loss1.append(loss1)
@@ -168,15 +170,15 @@ if __name__== "__main__":
 			exp_log_lik_loss[i].append(loss)
 
 
-# 		plot_boundaries_hyperrect(X = X_train,
-# 							   y = y_train,
-# 							   x_axis= 0,
-# 							   y_axis= 1,
-# 							   black_box= black_box,
-# 							   color_map= color_map,
-# 							   file_name = filename,
-# 							   sTGMA= model,
-# 							   steps= 100)
+		plot_boundaries_hyperrect(X = X_train,
+							   y = y_train,
+							   x_axis= 0,
+							   y_axis= 1,
+							   black_box= black_box,
+							   color_map= color_map,
+							   file_name = filename,
+							   sTGMA= model,
+							   steps= 100)
 		save_loss2.append(loss)
 		save_share_loss2.append(share_loss2)
 

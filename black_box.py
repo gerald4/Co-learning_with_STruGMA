@@ -23,7 +23,7 @@ class BlackBoxNN(tf.keras.Model):
 
 
 
-	def share_loss(self, X, sTGMA):
+	def share_loss(self, X, sTGMA, weights = None):
 		kl = tf.keras.losses.KLDivergence()
 
 		def kl_divergence(x):
@@ -31,7 +31,8 @@ class BlackBoxNN(tf.keras.Model):
 				tf.exp(
 					sTGMA.compute_log_conditional_distribution(x)
 					),
-			self.__call__(x)
+			self.__call__(x),
+			sample_weight= weights
 			)
 
 

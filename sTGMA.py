@@ -229,6 +229,42 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 		return list_samples
 
 
+	def sample_importance(self, nb_samples):
+		list_samples = []
+		list_weights = []
+		tic = time()
+		for i in range(len(self.y_unique)):
+			n_samples = int(self.logits_y[i].numpy()*nb_samples)
+			dist = tfd.Mixture( cat = tfp.distributions.Categorical(
+				 logits = self.logits_k[i]),
+				 components = [
+					 tfd.Independent(
+						 tfd.TruncatedNormal(loc = self.mu[i,j,:],
+						    low = self.lower[i,j,:],
+							high = self.upper[i,j,:],
+							scale = np.finfo(np.float32).eps + tf.nn.softplus(
+								self.sigma[i,j,:])
+							),
+						 reinterpreted_batch_ndims=1) for j in range(
+							 self.n_components
+							 )
+							 ]
+							 )
+			samples = dist.sample(n_samples)
+			weights = (
+				tf.math.exp(tf.reduce_logsumexp(self.compute_log_pdf(samples, i), axis = -1))
+					/
+				tf.math.exp(dist.log_prob(samples))
+				)
+			list_samples.append(samples)
+			list_weights.append(weights)
+		tac = time()
+		print(f"Time for sampling: {(tac-tic)/60} min")
+
+		return tf.concat(list_samples, axis = 0), tf.concat(list_weights, axis = 0)
+
+
+
 	def sample_directly(self, nb_samples):
 		@tf.function #(experimental_compile=True)
 		def run_chain(num_results, num_burnin_steps, current_state, kernel_type):
