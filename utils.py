@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from scipy.special import softmax
+from sklearn.metrics import accuracy_score
 
 plt.rcParams["figure.figsize"] = (10,10)
 
@@ -116,7 +117,6 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 	labels_bb = np.argmax(labels_bb, axis = 1)
 
 	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
-	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
 
 	#Decision boundary sTGMA
 	plt.subplot(2, 1, 1)
@@ -133,7 +133,7 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 			currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
 	                                    edgecolor=color_map[c], alpha=1))
 # 			plt.scatter(*mu[i,[x_axis, y_axis]], marker='^')
-	plt.title("sTGMA")
+	plt.title(f"sTGMA, accuracy_score: {accuracy_score(y, sTGMA.predict(X))}")
 
 
 	#Decision boundary ANN
@@ -141,8 +141,10 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 	z2 = labels_bb.reshape(xx.shape)
 	plt.contourf(xx, yy, z2, alpha=0.5)
 	plt.scatter(X1, X2, c = [color_map[y[i]] for i in range(X.shape[0])],  edgecolor='k', lw=0, cmap="Set1")
-	plt.title("ANN")
-	print("toto************************", file_name)
+	plt.title(f"ANN, accuracy_score: {accuracy_score(y, np.argmax(black_box.predict(X).numpy(), axis = 1))}")
+
+	plt.suptitle(f'fidelity: {accuracy_score(sTGMA.predict(X), np.argmax(black_box.predict(X).numpy(), axis = 1))}')
+	print("saving boundaries************************", file_name)
 	plt.savefig(file_name, dpi=150)
 	plt.clf()
 
