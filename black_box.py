@@ -11,18 +11,20 @@ import tensorflow_probability as tfp
 
 tfd = tfp.distributions
 
-class BlackBoxNN(tf.keras.Model):
+class BlackBoxNN(tf.Module):
 
     def __init__(self, nb_units, nb_classes, data_dim = 2):
         super(BlackBoxNN, self).__init__()
-        self.dense1 = tf.keras.layers.Dense(units = nb_units, activation=tf.nn.relu, input_shape= (data_dim,))
-        self.dense2 = tf.keras.layers.Dense(nb_units, activation=tf.nn.relu)
+        self.dense1 = tf.keras.layers.Dense(units = nb_units[0], activation=tf.nn.elu, input_shape= (data_dim,), kernel_regularizer=tf.keras.regularizers.l2(0.001))
+        self.dense2 = tf.keras.layers.Dense(nb_units[1], activation=tf.nn.elu, kernel_regularizer=tf.keras.regularizers.l2(0.001))
 
         self.classifier = tf.keras.layers.Dense(nb_classes, activation="softmax")
 
+    @tf.function
+    def losses(self):
+        return self.dense1.losses + self.dense2.losses + self.classifier.losses
 
-
-
+    @tf.function
     def share_loss(self, X, sTGMA, weights = None):
         kl = tf.keras.losses.KLDivergence()
 
@@ -43,6 +45,7 @@ class BlackBoxNN(tf.keras.Model):
                use_reparametrization= False
         )
 
+    @tf.function
     def predict(self, X):
         return tf.nn.softmax(self.__call__(X))
 

@@ -9,7 +9,7 @@ Created on Wed Apr 22 15:36:44 2020
 import numpy as np
 from time import time
 
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 
 
 import tensorflow.compat.v2 as tf
@@ -29,9 +29,9 @@ from utils import plot_hyperrectangles, plot_pdfR, plot_pdf_hyperrectangles
 tfd = tfp.distributions
 
 
-class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
+class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
 
-    def __init__(self, n_components, data_dim, n_classes, seed = 111):
+    def __init__(self, n_components, data_dim, n_classes, theta, seed = 111, m_max_min = 10.):
         """
         This function creates the variables of the model.
         n_components: number of components for each mixture per class
@@ -44,7 +44,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
         tf.random.set_seed(seed)
 
         #Value eta for logisitic
-        self.eta = tf.Variable(0.0, trainable=False)
+        self.eta = tf.Variable(20.0, trainable=False)
 
         self.n_components = n_components
         self.stable = tf.constant(np.finfo(np.float32).eps)
@@ -89,6 +89,8 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
 
         self.theta = tf.Variable(0.2, name = "smallest_margin", trainable = False)
 
+        self.m_max_min = tf.constant(10., name = "m_max_min")
+
 
     def gmm_initialisation(self, X_train, y_train):
         """This function intialises our STGMA using gaussian mixture model
@@ -111,10 +113,10 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
             self.sigma[i].assign(gmm.covariances_.astype(np.float32))
 
             self.logits_y[i].assign(X_train[np.where(y_train == y_unique[i])[0]].shape[0]/X_train.shape[0])
-
+            #print(f"-----components ---->>>>> {np.sum(model.weights_ > 0.01)}")
         self.y_unique = y_unique
 
-
+    @tf.function    
     def normalizing_constant(self, way = "independent"):
         """This function computes the normalizing constant which envolves the integral
         """
@@ -228,13 +230,237 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
         print(f"Time for sampling: {(tac-tic)/60} min")
         return list_samples
 
+    @tf.function
+    def projection(self, X, y, resp, weights):
 
+        #print("toooooooooooooooooooooooooooooooooooooooo")
+
+        @tf.function
+        def expec_ll(alpha1, alpha2):#, i, j, c1, c2):
+
+            temp_lower = tf.identity(self.lower)
+            temp_upper = tf.identity(self.upper)
+
+            self.lower.assign(alpha1)
+            self.upper.assign(alpha2)
+
+            log_cond = self.expected_ll(X, y, resp, weights)
+
+            self.lower.assign(temp_lower)
+            self.upper.assign(temp_upper)
+
+            #tf.print(self.lower)
+            #tf.print(self.upper)
+
+            return log_cond
+
+        # def empirical_entropy(X, alpha1, alpha2, i, j, c1, c2):
+
+        #     temp_lower = tf.identity(self.lower)
+        #     temp_upper = tf.identity(self.upper)
+
+        #     self.lower.assign(alpha1)
+        #     self.upper.assign(alpha2)
+
+        #     log_cond = self.compute_log_conditional_distribution(X)
+
+        #     self.lower.assign(temp_lower)
+        #     self.upper.assign(temp_upper)
+
+        #     #tf.print(self.lower)
+        #     #tf.print(self.upper)
+
+        #     return - tf.reduce_sum(tf.expand_dims(resp[c1,..., i] + resp[c2,...,j], axis = -1)*tf.exp(log_cond)*log_cond)
+
+        # index_i = tf.TensorArray(dtype =tf.int32, size = 0, dynamic_size = True)
+        # index_j = tf.TensorArray(dtype = tf.int32, size = 0, dynamic_size =True)
+        # tf.print(self.no_ovelap_test(), output_stream="file:///tmp/tensor.txt")
+
+
+        #tf.print("toooooooooooooooooooooooooooooooooooooooo")
+
+        tmp_indexes = tf.where(tf.less(self.no_ovelap_test(), -self.theta/5.))
+
+        #tf.print(tmp_indexes, output_stream="file:///tmp/tensor2.txt")
+
+        #tf.print(tf.size(tmp_indexes))
+
+        while not(tf.equal(tf.size(tmp_indexes), 0)):
+            #print("while  looop")
+
+
+            classes = tf.cast(tf.math.floordiv(tmp_indexes, self.n_components), tf.int32) 
+            good_indexes = tf.cast(tf.math.floormod(tmp_indexes, self.n_components), tf.int32)
+
+            score = tf.TensorArray(dtype =tf.float32, size = 0, dynamic_size = True, name = "score",
+                clear_after_read=False)
+            #Matrix of updates
+            alpha1 = tf.TensorArray(dtype = tf.float32, size = 0, dynamic_size = True, name = "alpha1",
+                clear_after_read=False)
+
+            alpha2 = tf.TensorArray(dtype = tf.float32, size = 0, dynamic_size = True, name = "alpha2",
+                clear_after_read=False)
+
+            #tf.print(classes)
+            #tf.print(good_indexes)
+                
+            #For each update, compute the entropy
+            for d in tf.range(tf.constant(self.data_dim)):
+                #tf.print(self.lower)
+                #print("d loooooop")
+
+                if self.upper[classes[0,0],good_indexes[0,0],d] >  self.upper[classes[0,1],good_indexes[0,1],d]:
+
+                    alpha1 = alpha1.write(2*d, tf.tensor_scatter_nd_update(self.lower, 
+                                    [[classes[0,0],good_indexes[0,0],d]],
+                                [self.upper[classes[0,1], good_indexes[0,1],d]] ))
+
+                    alpha2 = alpha2.write(2*d, self.upper)
+                    score = score.write(2*d, expec_ll(alpha1.read(2*d), alpha2.read(2*d)))
+                        #,good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                else: 
+
+                    alpha1 = alpha1.write(2*d, tf.tensor_scatter_nd_update(self.lower, 
+                    [[classes[0,1],good_indexes[0,1],d]],
+                    [ self.upper[classes[0,0], good_indexes[0,0],d]]))
+
+                    alpha2 = alpha2.write(2*d, self.upper)
+
+                    score = score.write(2*d , expec_ll(alpha1.read(2*d), alpha2.read(2*d )))
+                       #,
+                        #good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                if self.lower[classes[0,0], good_indexes[0,0],d] < self.lower[classes[0,1], good_indexes[0,1], d]:
+
+                    alpha2 = alpha2.write(2*d+1, tf.tensor_scatter_nd_update(self.upper, 
+                    [[classes[0,0],good_indexes[0,0],d]],
+                    [ self.lower[classes[0,1], good_indexes[0,1],d]] ))
+
+                    alpha1 = alpha1.write(2*d+1, self.lower)
+
+                    score = score.write(2*d + 1, expec_ll(alpha1.read(2*d + 1), alpha2.read(2*d + 1)))
+                    #,
+                     #   good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                else:
+
+                    alpha2 = alpha2.write(2*d+1, tf.tensor_scatter_nd_update(self.upper, 
+                    [[classes[0,1],good_indexes[0,1],d]],
+                    [ self.lower[classes[0,0], good_indexes[0,0],d]] ))
+
+                    alpha1 = alpha1.write(2*d+1, self.lower)
+
+                    score = score.write(2*d + 1, expec_ll(alpha1.read(2*d + 1), alpha2.read(2*d + 1)))
+                    #,
+                     #   good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                # alpha1 = alpha1.write(4*d, tf.tensor_scatter_nd_update(self.lower, 
+                #     [[classes[0,0],good_indexes[0,0],d]],
+                #     [tf.math.maximum(self.lower[classes[0,0],good_indexes[0,0],d],
+                #         tf.math.minimum(self.upper[classes[0,0], good_indexes[0,0],d],
+                #             self.upper[classes[0,1], good_indexes[0,1],d]))] ))
+                # #tf.print(d)
+                # alpha2 = alpha2.write(4*d, self.upper)
+                # #tf.print("totototoototo")
+                # #emp_ent = empirical_entropy()
+                # #tf.print(alpha1.read(4*d))
+                # score = score.write(4*d, empirical_entropy(X, alpha1.read(4*d), alpha2.read(4*d),
+                #     good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                # #tf.print(alpha1.read(4*d))
+
+                # #tf.print(self.lower)
+
+                # alpha1 = alpha1.write(4*d+1, tf.tensor_scatter_nd_update(self.lower, 
+                #     [[classes[0,1],good_indexes[0,1],d]],
+                #     [tf.math.maximum(self.lower[classes[0,1],good_indexes[0,1],d],
+                #         tf.math.minimum(self.upper[classes[0,1], good_indexes[0,1],d],
+                #             self.upper[classes[0,0], good_indexes[0,0],d]))]))
+
+                # alpha2 = alpha2.write(4*d+1, self.upper)
+
+                # score = score.write(4*d + 1, empirical_entropy(X, alpha1.read(4*d +1 ), alpha2.read(4*d + 1),
+                #     good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+                # #tf.print(self.lower)
+
+                # alpha2 = alpha2.write(4*d+2, tf.tensor_scatter_nd_update(self.upper, 
+                #     [[classes[0,0],good_indexes[0,0],d]],
+                #     [tf.math.minimum(self.upper[classes[0,0],good_indexes[0,0],d],
+                #         tf.math.maximum(self.lower[classes[0,0], good_indexes[0,0],d],
+                #             self.lower[classes[0,1], good_indexes[0,1],d]))] ))
+
+                # alpha1 = alpha1.write(4*d+2, self.lower)
+
+                # score = score.write(4*d + 2, empirical_entropy(X, alpha1.read(4*d + 2), alpha2.read(4*d + 2),
+                #     good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                # #tf.print(self.lower)
+
+                # alpha2 = alpha2.write(4*d+3, tf.tensor_scatter_nd_update(self.upper, 
+                #     [[classes[0,1],good_indexes[0,1],d]],
+                #     [tf.math.minimum(self.upper[classes[0,1],good_indexes[0,1],d],
+                #         tf.math.maximum(self.lower[classes[0,1], good_indexes[0,1],d],
+                #             self.lower[classes[0,0], good_indexes[0,0],d]))] ))
+
+                # alpha1 = alpha1.write(4*d+3, self.lower)
+
+                # score = score.write(4*d + 3, empirical_entropy(X, alpha1.read(4*d + 3), alpha2.read(4*d + 3),
+                #     good_indexes[0,0], good_indexes[0,1], classes[0,0], classes [0,1]))
+
+                #tf.print(self.lower)
+
+
+
+            #tf.print(score.stack())
+
+            #change the values of alpha corresponding to the lowest update
+            true_score = score.stack()
+            #ind = tf.cast(tf.math.argmin(tf.boolean_mask(true_score, tf.greater(true_score,0))), tf.int32)
+            ind = tf.cast(tf.math.argmin(true_score), tf.int32)
+            #tf.print(ind)
+
+            self.lower.assign(alpha1.read(ind))
+            self.upper.assign(alpha2.read(ind))    
+
+            #Re-compute the no-overlapp    
+            tmp_indexes = tf.where(tf.less(self.no_ovelap_test(), - self.theta))
+            #if not(tf.equal(tf.size(tmp_indexes), 0)):
+            #    tf.print(self.no_ovelap_test()[tmp_indexes[0,0], tmp_indexes[0,1]])
+            tf.print("number of remaining overlapping: ", tf.size(tmp_indexes))
+
+
+            #print("voiciiiiiii")
+
+        #tf.print(tmp_indexes)
+
+    @tf.function
+    def no_ovelap_test(self):
+        low = tf.reshape(self.lower, (self.lower.shape[0]*self.lower.shape[1],)+ (self.lower.shape[2:]))
+        
+        upp = tf.reshape(self.upper, (self.upper.shape[0]*self.upper.shape[1],)+ (self.upper.shape[2:]))
+        
+        centers = (1./2)*(upp + low)
+        
+        lenghts = (1./2)*(upp - low)
+        
+        pairwise_centers = tf.abs(centers[tf.newaxis, ...] - centers[:, tf.newaxis,...])
+        
+        pairwise_lengths = lenghts[tf.newaxis, ...] + lenghts[:, tf.newaxis, ...]
+        
+        no_overlap_mat = tf.reduce_max(pairwise_centers - pairwise_lengths, axis=-1)
+
+        return tf.linalg.band_part(no_overlap_mat, -1, 0) - tf.linalg.band_part(no_overlap_mat, 0, 0)
+
+
+
+    @tf.function
     def sample_importance(self, nb_samples):
         list_samples = []
         list_weights = []
         tic = time()
         for i in range(len(self.y_unique)):
-            n_samples = int(self.logits_y[i].numpy()*nb_samples)
+            n_samples = tf.dtypes.cast(self.logits_y[i]*nb_samples, tf.int32)
             dist = tfd.Mixture( cat = tfp.distributions.Categorical(
                  logits = self.logits_k[i]),
                  components = [
@@ -261,7 +487,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
         tac = time()
         print(f"Time for sampling: {(tac-tic)/60} min")
 
-        return tf.concat(list_samples, axis = 0), tf.concat(list_weights, axis = 0)
+        return tf.concat(list_samples, axis = 0) #, tf.concat(list_weights, axis = 0)
 
 
 
@@ -312,10 +538,11 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
                 ]
             )
         )
+
     def log_pdf(self, X):
         return tf.reduce_logsumexp(self.log_joint_prob(X), axis = -1)
 
-
+    @tf.function
     def compute_log_conditional_distribution(self, X):
         log_joint_prob = tf.transpose (
             tf.stack(
@@ -345,8 +572,6 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
                use_reparametrization= False
         )
 
-
-
     def predict(self, X):
 
         cond_prob = tf.exp(
@@ -354,14 +579,41 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
                 X
                 )
             )
-        return np.argmax(
-            cond_prob.numpy(),
+        return tf.argmax(
+            cond_prob,
             axis = -1
             )
 
+    @tf.function
+    def expected_ll (self, X, y, responsibilities, weights):
+
+        list_likelihood = tf.TensorArray(dtype =tf.float32, size =0, dynamic_size= True)
+        #For each unique y_train, create a compute the expected log-likelihood
+        for i in range(len(self.y_unique)):
+            list_likelihood = list_likelihood.write( i, 
+                tf.reduce_mean(
+                    tf.multiply(
+                        tf.multiply(weights[:,self.y_unique[i], tf.newaxis],
+                                responsibilities[self.y_unique[i]]
+                            ),
+                        # tf.gather_nd(responsabilities[self.y_unique[i]],
+                        #             tf.where(tf.equal(y, self.y_unique[i]))
+                        #             ),
+                        self.compute_log_pdf(
+                            X, 
+                            self.y_unique[i]
+                            # tf.gather_nd(X, tf.where(tf.equal(y, self.y_unique[i]))),
+                            # self.y_unique[i]
+                            )
+                        )
+                    )
+                )
+
+        return - tf.reduce_sum(list_likelihood.stack())
+
 
     @tf.function
-    def __call__(self, X, y, responsabilities):
+    def __call__(self, X, y, responsabilities, weights):
 
         #Compute expected likelihood per class
 
@@ -372,38 +624,67 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.keras.Model):
             list_likelihood.append(
                 tf.reduce_mean(
                     tf.multiply(
-                        tf.gather_nd(responsabilities[self.y_unique[i]],
-                                    tf.where(tf.equal(y, self.y_unique[i]))
-                                    ),
+                        tf.multiply(weights[:,self.y_unique[i], tf.newaxis],
+                                responsabilities[self.y_unique[i]]
+                            ),
+                        # tf.gather_nd(responsabilities[self.y_unique[i]],
+                        #             tf.where(tf.equal(y, self.y_unique[i]))
+                        #             ),
                         self.compute_log_pdf(
-                            tf.gather_nd(X, tf.where(tf.equal(y, self.y_unique[i]))),
+                            X, 
                             self.y_unique[i]
+                            # tf.gather_nd(X, tf.where(tf.equal(y, self.y_unique[i]))),
+                            # self.y_unique[i]
                             )
                         )
                     )
                 )
 
 
+        @tf.function
+        def noverlap():
+            """This function is not important yet
+            It helps to penalize overalapping rectangles"""
+    
+            centers = (1./2)*(self.lower + self.upper)
+            radii = tf.norm((1./2)*(self.upper - self.lower) , axis= 1, keepdims=True)
+
+            r = tf.reduce_sum(centers*centers, 1)
+
+                # Turning r into vector
+            r = tf.reshape(r, [-1, 1])
+            D = r - 2*tf.matmul(centers, tf.transpose(centers)) + tf.transpose(r)
 
 
+            penalty = tf.linalg.band_part((tf.transpose(radii) + radii)/(D + tf.eye(num_rows = D.shape[0])) 
+                                           , num_lower= 0, num_upper = 1)
+
+
+
+            return tf.reduce_sum(penalty - tf.linalg.tensor_diag(tf.linalg.diag_part(penalty))) 
+
+
+        prior = tfd.Independent(tfd.Normal(loc = self.m_max_min, 
+                    scale =[10.]*self.data_dim), 
+            reinterpreted_batch_ndims=1).log_prob(self.upper) +  tfd.Independent(
+        tfd.Normal(loc = - self.m_max_min, scale =[10.]*self.data_dim), reinterpreted_batch_ndims=1).log_prob(self.lower)
+        #log_p_x_given_k = pik + tf.transpose(
         #New losss:
-        return - tf.reduce_sum(list_likelihood)
+        return - tf.reduce_sum(list_likelihood) - tf.reduce_sum(prior) #+ noverlap()
 
 
 
-
+    @tf.function    
     def compute_responsibilities(self, X, y):
 
-        responsibilities = np.array(
-            np.zeros(
-                shape=(self.n_classes, X.shape[0], self.n_components)
-                ).astype(np.float32)
-            )
+        responsibilities =  tf.TensorArray(dtype =tf.float32, size =0, dynamic_size= True)
 
-        #y_unique = np.unique(y)
-
+        # #y_unique = np.unique(y)
+        # # tf.map_fn(
+        # #     fn, elems, dtype=None, parallel_iterations=None, back_prop=True,
+        # #     swap_memory=False, infer_shape=True, name=None
+        # # )
         for c in self.y_unique:
-            responsibilities[c] = tf.nn.softmax(self.compute_log_pdf(X, c), axis = 1).numpy()
+            responsibilities = responsibilities.write(c, tf.nn.softmax(self.compute_log_pdf(X, c), axis = 1))
 
-
-        return responsibilities
+        return responsibilities.stack()#tf.stack([tf.nn.softmax(tf.nn.softmax(self.compute_log_pdf(X, c), axis = 1)) for c in self.y_unique])
