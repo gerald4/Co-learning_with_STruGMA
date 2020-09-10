@@ -13,8 +13,10 @@ from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.cm as cm
 from scipy.special import softmax
+from sklearn.metrics import accuracy_score
+from matplotlib import colors
 
-plt.rcParams["figure.figsize"] = (10,10)
+#plt.rcParams["figure.figsize"] = (10,10)
 
 
 def plot_hyperrectangles(X, y, x_axis, y_axis, lower, upper, nb_hyperrectangles, file_name, color_map, mu):
@@ -99,7 +101,7 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 
 	X1 = X[:,0]
 	X2 = X[:,1]
-
+	cmap = colors.ListedColormap(list(color_map.values())[:len(np.unique(y))])
 	# Define region of interest by data limits
 	deltaX = (max(X1) - min(X1))/10
 	deltaY = (max(X2) - min(X2))/10
@@ -115,13 +117,17 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 	labels_bb = black_box(np.c_[xx.ravel(), yy.ravel()])
 	labels_bb = np.argmax(labels_bb, axis = 1)
 
-	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
-	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()])
-
+	labels_stgma = sTGMA.predict(np.c_[xx.ravel(), yy.ravel()].astype(np.float32)).numpy()
 	#Decision boundary sTGMA
-	plt.subplot(2, 1, 1)
+	#plt.subplot(2, 1, 1)
 	z1 = labels_stgma.reshape(xx.shape)
-	plt.contourf(xx, yy, z1, alpha=0.5)
+	
+	ranges = np.linspace(z1.min(), z1.max(), len(color_map.values())+1)
+	norm = colors.BoundaryNorm(ranges, cmap.N)
+
+
+	plt.contourf(xx, yy, z1, alpha=0.2, cmap = cmap, norm=norm)
+
 	plt.scatter(X1, X2, c = [color_map[y[i]] for i in range(X.shape[0])],  edgecolor='k', lw=0, cmap="Set1")
 	currentAxis = plt.gca()
 	for c in range(len(sTGMA.y_unique)):
@@ -133,17 +139,19 @@ def plot_boundaries_hyperrect(X, y, x_axis, y_axis, file_name, color_map, sTGMA,
 			currentAxis.add_patch(Rectangle((low[x_axis], low[y_axis]), upp[x_axis]-low[x_axis], upp[y_axis]-low[y_axis], fill=None,
 	                                    edgecolor=color_map[c], alpha=1))
 # 			plt.scatter(*mu[i,[x_axis, y_axis]], marker='^')
-	plt.title("sTGMA")
-
-
+	#plt.title(f"sTGMA, accuracy_score: {accuracy_score(y, sTGMA.predict(X))}")
+	plt.savefig(f"{file_name}_stgma.png")
+	plt.clf()
 	#Decision boundary ANN
-	plt.subplot(2, 1, 2)
+	#plt.subplot(2, 1, 2)
 	z2 = labels_bb.reshape(xx.shape)
-	plt.contourf(xx, yy, z2, alpha=0.5)
+	plt.contourf(xx, yy, z2, alpha=0.2, cmap =cmap, norm = norm)
 	plt.scatter(X1, X2, c = [color_map[y[i]] for i in range(X.shape[0])],  edgecolor='k', lw=0, cmap="Set1")
-	plt.title("ANN")
-	print("toto************************", file_name)
-	plt.savefig(file_name, dpi=150)
+	#plt.title(f"ANN, accuracy_score: {accuracy_score(y, np.argmax(black_box.predict(X).numpy(), axis = 1))}")
+
+	#plt.suptitle(f'fidelity: {accuracy_score(sTGMA.predict(X), np.argmax(black_box.predict(X).numpy(), axis = 1))}')
+	print("saving boundaries************************", file_name)
+	plt.savefig(f"{file_name}_bb.png")
 	plt.clf()
 
 def plot_boundary(X, y, x_axis, y_axis, file_name, color_map, model, rect = False, steps=1000):

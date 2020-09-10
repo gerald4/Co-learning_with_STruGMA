@@ -17,7 +17,7 @@ import numpy as np
 
 #Preprocessing daset
 
-def preprocess(data, dataset_name, random_state = 111, if_PCA = False, use_classes=False):
+def preprocess(data, dataset_name, random_state = 111, if_PCA = False, use_classes=False, scale = True):
 
     #Encode labels
     le = LabelEncoder()
@@ -47,14 +47,20 @@ def preprocess(data, dataset_name, random_state = 111, if_PCA = False, use_class
     y_train_onehot = onehot.transform(y_train.reshape(-1,1)).toarray().astype(np.float32)
     y_val_onehot = onehot.transform(y_val.reshape(-1,1)).toarray().astype(np.float32)
     y_test_onehot = onehot.transform(y_test.reshape(-1,1)).toarray().astype(np.float32)
-
-    #Normalising data
     scaler = StandardScaler()
-    scaler.fit(train[:,:-1])
+    #Normalising data
+    if scale:
 
-    X_train = scaler.transform(train[:,:-1]).astype(np.float32)
-    X_val = scaler.transform(val[:,:-1]).astype(np.float32)
-    X_test = scaler.transform(test[:,:-1]).astype(np.float32)
+        scaler.fit(train[:,:-1])
+
+        X_train = scaler.transform(train[:,:-1]).astype(np.float32)
+        X_val = scaler.transform(val[:,:-1]).astype(np.float32)
+        X_test = scaler.transform(test[:,:-1]).astype(np.float32)
+
+    else:
+        X_train = train[:,:-1].astype(np.float32)
+        X_val = val[:,:-1].astype(np.float32)
+        X_test = test[:,:-1].astype(np.float32)
 
     #if PCA, apply PCA, and then return the two first axes
     if if_PCA:
@@ -64,10 +70,44 @@ def preprocess(data, dataset_name, random_state = 111, if_PCA = False, use_class
         X_val = pca.transform(X_val)[:,0:2].astype(np.float32)
 
 
-    color_map = {-1: (1, 1, 1), 0: "blue", 1: "red", 2: "green", 3: "yellow", 4: "orange", 5: "purple",
+    color_map = {0: "blue", 1: "red", 2: "green", 3: "yellow", 4: "orange", 5: "purple",
             6: "brown", 7: "pink", 8: "gray", 9: "olive", 10: "cyan" }
 
-    return X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map
+    return X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map, list(data)
+
+
+def data_to_interpret(dataset_name, number = 0):
+
+    X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map, column_names = switch_dataset(dataset_name)(if_PCA = False, number = number)
+
+
+
+    holdout_train = np.concatenate( (np.concatenate((X_train, y_train[:,None]), axis=1), 
+                                     np.concatenate((X_val, y_val[:,None]), axis=1)), axis = 0)
+
+    return holdout_train[:,:-1], holdout_train[:,-1], X_test, y_test, np.concatenate( (y_train_onehot, y_val_onehot), axis = 0), y_test_onehot, scaler, color_map, column_names
+
+
+
+def generate_dataset(dataset_name, number = 0):
+
+    X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map, _ = switch_dataset(dataset_name)(if_PCA = False, number = number)
+
+
+
+    holdout_train = np.concatenate( (np.concatenate((X_train, y_train[:,None]), axis=1), 
+                                     np.concatenate((X_val, y_val[:,None]), axis=1)), axis = 0)
+
+
+
+    np.savetxt(f"data_global/{dataset_name}/{dataset_name}_holdout_train_{number}.csv", holdout_train, delimiter=";")
+
+    np.savetxt(f"data_global/{dataset_name}/{dataset_name}_train_{number}.csv", np.concatenate((X_train, y_train[:,None]), axis=1), delimiter=";")
+
+    np.savetxt(f"data_global/{dataset_name}/{dataset_name}_val_{number}.csv", np.concatenate((X_val, y_val[:,None]), axis=1), delimiter=";")
+
+    np.savetxt(f"data_global/{dataset_name}/{dataset_name}_holdout_test_{number}.csv", np.concatenate((X_test, y_test[:,None]), axis=1), delimiter=";")
+
 
 
 def x_train_test(X,Y,l_classes,l_dataset, use_classes=False):
@@ -100,7 +140,7 @@ def x_train_test(X,Y,l_classes,l_dataset, use_classes=False):
     return N, M, X_train, X_val, X_test, y_train, y_val, y_test #, y_train_ohot, y_val_ohot, y_test_ohot, l_classes,l_dataset
 
 
-def read_data1(path = "data_global/data1/data1.csv", if_PCA = False):
+def read_data1(path = "data_global/data1/data1.csv", if_PCA = False, number = 0):
 
     data = pd.read_csv("data_global/data1/data1.csv")
 
@@ -132,68 +172,152 @@ def read_gaussian_3_quantiles(path = None, if_PCA = False):
     data = pd.DataFrame(np.concatenate((X1,Y1[:,None]),axis=1), columns = ['X1', 'X2', 'Class'])
 
     return preprocess(data = data, dataset_name = "two_info_one_clus_3")
+def read_adult(path = "data_global/adult/", if_PCA = False, number = 0):
 
-def read_adult(path = "data_global/adult/adult.data", if_PCA = False):
+    #preprocessing from https://github.com/vivek2319/Predicting-US-Census-Income/blob/master/predict.py
 
-    df = pd.read_csv(path, 1, ",")
-    df.columns = [
-    "Age", "WorkClass", "fnlwgt", "Education", "EducationNum",
-    "MaritalStatus", "Occupation", "Relationship", "Race", "Gender",
-    "CapitalGain", "CapitalLoss", "HoursPerWeek", "Country", "Class"
-    ]
-    df["Class"] = df["Class"].map({ "<=50K": 0, ">50K":1 })
-    df['Gender'] = df['Gender'].map({' Male':1,' Female':0}).astype(int)
-
-    df['Country'] = df['Country'].replace(' ?',np.nan)
-    df['Workclass'] = df['WorkClass'].replace(' ?',np.nan)
-    df['Occupation'] = df['Occupation'].replace(' ?',np.nan)
-    df.dropna(how='any',inplace=True)
-
-    df.loc[df['Country'] != ' United-States', 'Country'] = 'Non-US'
-    df.loc[df['Country'] == ' United-States', 'Country'] = 'US'
-    df['Country'] = df['Country'].map({'US':1,'Non-US':0}).astype(int)
+    columns = ['Age','Workclass','fnlgwt','Education','Education num','Marital Status',
+               'Occupation','Relationship','Race','Sex','Capital Gain','Capital Loss',
+               'Hours/Week','Native country','Income']
+    train = pd.read_csv(f'{path}adult-training.csv', names=columns)
+    test = pd.read_csv(f'{path}adult-test.csv', names=columns, skiprows=1)
 
 
-    df['MaritalStatus'] = df['MaritalStatus'].replace([' Divorced',' Married-spouse-absent',' Never-married',' Separated',' Widowed'],'Single')
-    df['MaritalStatus'] = df['MaritalStatus'].replace([' Married-AF-spouse',' Married-civ-spouse'],'Couple')
+    ####################Clean the Data
+
+    df = pd.concat([train, test], axis=0)
+    dff=df
+    k=df
+
+    df['Income'] = df['Income'].apply(lambda x: 1 if x==' >50K' else 0)
+
+    for col in df.columns:
+        if type(df[col][0]) == str:
+            print("Working on " + col)
+            df[col] = df[col].apply(lambda val: val.replace(" ",""))
 
 
-    df['MaritalStatus'] = df['MaritalStatus'].map({'Couple':0,'Single':1})
-
-    rel_map = {' Unmarried':0,' Wife':1,' Husband':2,' Not-in-family':3,' Own-child':4,' Other-relative':5}
-
-    df['Relationship'] = df['Relationship'].map(rel_map)
-
-    race_map={' White':0,' Amer-Indian-Eskimo':1,' Asian-Pac-Islander':2,' Black':3,' Other':4}
+    ####################REMOVE UNKNOWNS
+        
+    df.replace(' ?', np.nan, inplace=True)###making copy for visualization
 
 
-    df['Race']= df['Race'].map(race_map)
+    #################### Converting to int
+
+    df = pd.concat([df, pd.get_dummies(df['Workclass'],prefix='Workclass',prefix_sep=':')], axis=1)
+    df.drop('Workclass',axis=1,inplace=True)
+
+    df = pd.concat([df, pd.get_dummies(df['Marital Status'],prefix='Marital Status',prefix_sep=':')], axis=1)
+    df.drop('Marital Status',axis=1,inplace=True)
+
+    df = pd.concat([df, pd.get_dummies(df['Occupation'],prefix='Occupation',prefix_sep=':')], axis=1)
+    df.drop('Occupation',axis=1,inplace=True)
+
+    df = pd.concat([df, pd.get_dummies(df['Relationship'],prefix='Relationship',prefix_sep=':')], axis=1)
+    df.drop('Relationship',axis=1,inplace=True)
+
+    df = pd.concat([df, pd.get_dummies(df['Race'],prefix='Race',prefix_sep=':')], axis=1)
+    df.drop('Race',axis=1,inplace=True)
+
+    df = pd.concat([df, pd.get_dummies(df['Sex'],prefix='Sex',prefix_sep=':')], axis=1)
+    df.drop('Sex',axis=1,inplace=True)
+
+    df = pd.concat([df, pd.get_dummies(df['Native country'],prefix='Native country',prefix_sep=':')], axis=1)
+    df.drop('Native country',axis=1,inplace=True)
+
+    df.drop('Education', axis=1,inplace=True)
+
+    df = df.rename(columns={'Income': 'Class'})
+
+    print(df.shape)
+
+
+    return preprocess(data = df, dataset_name = "adult", if_PCA = if_PCA, random_state=111+number)
+
+
+def read_ionosphere(path="data_global/ionosphere/Ionosphere.csv", if_PCA = False, number =0):
+    dataset=pd.read_csv(path,delimiter=';')
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    dataset = dataset.rename(columns={'target': 'Class'})
+    #print(dataset.head())
+
+    return preprocess(data = dataset, dataset_name = "ionosphere", random_state=111+number )
+
+
+
+
+def read_indian_liver(path="data_global/indian_liver/indian_liver.csv", if_PCA = False, number =0):
+    dataset=pd.read_csv(path,na_values='?',
+            names=['age',"gender"," Total_Bilirubin ","Direct_Bilirubin","Alkphos_Alkaline_Phosphotase","Sgpt_Alamine_Aminotransferase","Sgot_Aspartate Aminotransferase","TP_Total_Protiens","ALB_Albumin","A/G_Ratio_Albumin_and_Globulin_Ratio","Class"])
+
+    dataset=dataset.dropna()
     
-    def f(x):
-        if x['WorkClass'] == ' Federal-gov' or x['workclass']== ' Local-gov' or x['workclass']==' State-gov': 
-            return 'govt'
-        elif x['WorkClass'] == ' Private':
-            return 'private'
-        elif x['WorkClass'] == ' Self-emp-inc' or x['workclass'] == ' Self-emp-not-inc': 
-            return 'self_employed'
-        else: 
-            return 'without_pay'
+    dataset['gender'] = dataset["gender"].map({"Female": 0, "Male": 1})
+
+    print(dataset.shape)
+
+    #print(dataset.head())
+
+    return preprocess(data = dataset, dataset_name = "indian_liver", random_state=111+number, scale = True )
+
+
+def read_student_performance(path="data_global/student_performance/student-por.csv", if_PCA = False, number =0):
+    dataset=pd.read_csv(path,na_values='?', delimiter=";")
+
+    dataset=dataset.dropna()
     
-    
-    df['employment_type']=df.apply(f, axis=1)
+    dataset['school'] = dataset["school"].map({"GP": 0, "MS": 1})
 
-    employment_map = {'govt':0,'private':1,'self_employed':2,'without_pay':3}
+    dataset['sex'] = dataset["sex"].map({"F": 0, "M": 1})
 
-    df['employment_type'] = df['employment_type'].map(employment_map)
+    dataset['address'] = dataset["address"].map({"U": 0, "R": 1})
 
-    df.drop(labels=['Workclass','Education','Occupation'],axis=1,inplace=True)
-    df.loc[(df['CapitalGain'] > 0),'CapitalGain'] = 1
-    df.loc[(df['CapitalGain'] == 0 ,'CapitalGain')]= 0
+    dataset['famsize'] = dataset["famsize"].map({"LE3": 0, "GT3": 1})
 
-    return preprocess(data = df, dataset_name = "adult", if_PCA = if_PCA)
+    dataset['Pstatus'] = dataset["Pstatus"].map({"T": 0, "A": 1})
+    #print(dataset.head())
+
+    dataset = pd.concat([dataset, pd.get_dummies(dataset['Mjob'],prefix='Mjob',prefix_sep=':')], axis=1)
+    dataset.drop('Mjob',axis=1,inplace=True)
+
+    dataset = pd.concat([dataset, pd.get_dummies(dataset['Fjob'],prefix='Fjob',prefix_sep=':')], axis=1)
+    dataset.drop('Fjob',axis=1,inplace=True)
+
+    dataset = pd.concat([dataset, pd.get_dummies(dataset['reason'],prefix='reason',prefix_sep=':')], axis=1)
+    dataset.drop('reason',axis=1,inplace=True)
+
+    dataset = pd.concat([dataset, pd.get_dummies(dataset['guardian'],prefix='guardian',prefix_sep=':')], axis=1)
+    dataset.drop('guardian',axis=1,inplace=True)
 
 
-def read_wdbc(if_PCA =True, path="data_global/wdbc/wdbc.data"):
+    dataset['schoolsup'] = dataset["schoolsup"].map({"yes": 1, "no": 0})
+
+    dataset['famsup'] = dataset["famsup"].map({"yes": 1, "no": 0})
+
+    dataset['fatherd'] = dataset["fatherd"].map({"yes": 1, "no": 0})
+
+    dataset['activities'] = dataset["activities"].map({"yes": 1, "no": 0})
+
+    dataset['nursery'] = dataset["nursery"].map({"yes": 1, "no": 0})
+
+    dataset['higher'] = dataset["higher"].map({"yes": 1, "no": 0})
+
+    dataset['internet'] = dataset["internet"].map({"yes": 1, "no": 0})
+
+    dataset['romantic'] = dataset["romantic"].map({"yes": 1, "no": 0})
+
+    dataset['G3'] = dataset['G3'].apply(lambda x: 0 if x< 10 else 1)
+
+    dataset = dataset.rename(columns={'G3': 'Class'})
+
+    print(dataset.head())
+
+    return preprocess(data = dataset, dataset_name = "student_performance", random_state=111+number, scale = False )
+
+
+
+
+def read_wdbc(if_PCA =True, path="data_global/wdbc/wdbc.data", number =0):
     names = ["ID","Class"] + [f"Feat_{i}" for i in range(30)]
     dataset=pd.read_csv(path,na_values='?',index_col=0,
             names = names)
@@ -205,16 +329,113 @@ def read_wdbc(if_PCA =True, path="data_global/wdbc/wdbc.data"):
 
 
 
-    return preprocess(data = data, dataset_name = "wdbc", if_PCA = if_PCA)
+    return preprocess(data = data, dataset_name = "wdbc", if_PCA = if_PCA, random_state=111+number)
 
-def read_wine(if_PCA =False, path=None):
+def read_wine(if_PCA =False, path=None, number = 0):
     data = load_wine()
 
     dataset = pd.DataFrame(np.concatenate((data.data,data.target[:,None]),axis=1), columns = data.feature_names + ['Class'])
 
     
 
-    return preprocess(data = dataset, dataset_name = "wine")
+    return preprocess(data = dataset, dataset_name = "wine", random_state=111+number)
+
+def read_pima_indian_diabetes(path="data_global/pima_indian_diabetes/diabetes.csv", if_PCA=False, number = 0):
+    dataset=pd.read_csv(path,na_values='?')
+#X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+#dataset=dataset.fillna(method = "bfill")
+    dataset=dataset.dropna()
+    dataset = dataset.rename(columns={'Outcome': 'Class'})
+    #print(dataset.head())
+
+    return preprocess(data = dataset, dataset_name = "pima_indian_diabetes", random_state=111+number)
+
+
+
+def read_bank_marketing(path="data_global/bank_marketing/bank-additional.csv", if_PCA = False, number = 0):
+
+    # From https://gist.github.com/mick001/9db3609e49e98069316267349abc37b5
+
+    dataset=pd.read_csv(path,na_values='?',sep=";")
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    data=dataset.dropna()
+    var_names = data.columns.tolist()
+
+
+    categs = ['job','marital','education','default','housing','loan','contact','month','day_of_week','poutcome','y']
+    # Quantitative vars
+    quantit = [i for i in var_names if i not in categs]
+
+    # Get dummy variables for categorical vars
+    job = pd.get_dummies(data['job'])
+    marital = pd.get_dummies(data['marital'])
+    education = pd.get_dummies(data['education'])
+    default = pd.get_dummies(data['default'])
+    housing = pd.get_dummies(data['housing'])
+    loan = pd.get_dummies(data['loan'])
+    contact = pd.get_dummies(data['contact'])
+    month = pd.get_dummies(data['month'])
+    day = pd.get_dummies(data['day_of_week'])
+    poutcome = pd.get_dummies(data['poutcome'])
+
+    # Map variable to predict
+    dict_map = dict()
+    y_map = {'yes':1,'no':0}
+    dict_map['y'] = y_map
+    data = data.replace(dict_map)
+    label = data['y']
+
+    df1 = data[quantit]
+    df1_names = df1.keys().tolist()
+
+    # Scale quantitative variables
+    #min_max_scaler = preprocessing.MinMaxScaler()
+    #x_scaled = min_max_scaler.fit_transform(df1)
+    
+    #df1 = pd.DataFrame(x_scaled)
+    #df1.columns = df1_names
+
+    # Get final df
+    final_df = pd.concat([df1,
+                          job,
+                          marital,
+                          education,
+                          default,
+                          housing,
+                          loan,
+                          contact,
+                          month,
+                          day,
+                          poutcome,
+                          label], axis=1)
+
+    data_f = final_df.rename(columns={'y': 'Class'})
+
+    return preprocess(data = data_f, dataset_name = "bank_marketing", random_state=111+number)
+
+def read_magic_gamma(path="data_global/magic_gamma/magic04.data", if_PCA = False, number = 0):
+
+    # From https://gist.github.com/mick001/9db3609e49e98069316267349abc37b5
+    features = [ 'fLength', 'fWidth', 'fSize', 'fConc', 'fConc1', 'fAsym', 'fM3Long', 'fM3Trans', 'fAlpha', 'fDist', 'Class' ]
+
+    dataset=pd.read_csv(path,na_values='?',sep=",", names = features)
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    data=dataset.dropna()
+
+
+    return preprocess(data = data, dataset_name = "magic_gamma", random_state= 111+number)
+
+
+def read_statlog_satellite(path="data_global/statlog_satellite/statlog_satellite.csv", if_PCA = False, number=0):
+
+    dataset=pd.read_csv(path,na_values='?',sep=";")
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    data=dataset.dropna()
+
+
+    data = data.rename(columns={"target": 'Class'})
+
+    return preprocess(data = data, dataset_name = "statlog_satellite", random_state=111+number)
 
 
 def switch_dataset(name):
@@ -226,6 +447,13 @@ def switch_dataset(name):
         'read_gaussian_3_quantiles': read_gaussian_3_quantiles,
         "adult": read_adult,
         "wine": read_wine,
+        "ionosphere": read_ionosphere,
+        "pima_indian_diabetes": read_pima_indian_diabetes,
+        "bank_marketing": read_bank_marketing, 
+        "magic_gamma": read_magic_gamma,
+        "statlog_satellite": read_statlog_satellite,
+        "indian_liver": read_indian_liver,
+        "student_performance": read_student_performance
 
     }
 

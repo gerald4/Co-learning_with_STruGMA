@@ -6,16 +6,26 @@ Created on Thu Apr 16 16:18:12 2020
 @author: gnanfack
 """
 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Apr 16 16:18:12 2020
+@author: gnanfack
+"""
+
 
 import numpy as np
+import os
+from time import time
+import datetime
+import gc
 
-
+from sklearn.metrics import accuracy_score
+from matplotlib import pyplot as plt
 
 import tensorflow.compat.v2 as tf
 import tensorflow_probability as tfp
-
-
-
+from tensorboard.plugins.hparams import api as hp
 
 from read_dataset_for_constraint import switch_dataset
 
@@ -23,95 +33,117 @@ from utils import plot_boundaries_hyperrect
 from sTGMA import SoftTruncatedGaussianMixtureAnalysis
 
 from black_box import BlackBoxNN
-
-tfd = tfp.distributions
-np.set_printoptions(precision=5)
-
-
+from config import  config_params, hyper_params
 
 
 
 @tf.function
-def train_step_sTGMA(data, labels, responsibilities, eta, samples):
+def train_step_sTGMA(data, labels, responsibilities, eta, samples, weights, t_range):
 
-	model.eta.assign(eta)
+    model.eta.assign(eta)
 
-	with tf.GradientTape() as tape:
-		expected_loglikel = model(data, labels, responsibilities)
-		share_loss = model.share_loss(X = samples,  black_box_model = black_box )
-		loss = expected_loglikel
-	gradients = tape.gradient(loss, model.trainable_variables)
-	optimizer_sTGMA.apply_gradients(zip(gradients, model.trainable_variables))
-	#Projected gradients
-	val = tf.where(tf.less(model.lower, model.upper),
+    with tf.GradientTape() as tape:
+        expected_loglikel = model(data, labels, responsibilities, weights)
+        share_loss = model.share_loss(X = samples,  black_box_model = black_box )
+        loss = expected_loglikel
+
+        prior = tfd.Independent(tfd.Normal(loc = model.m_max_min, 
+                    scale =[10.]*model.data_dim), 
+            reinterpreted_batch_ndims=1).log_prob(model.upper) +  tfd.Independent(
+        tfd.Normal(loc = - model.m_max_min, scale =[10.]*model.data_dim), reinterpreted_batch_ndims=1).log_prob(model.lower)
+
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer_sTGMA.apply_gradients(zip(gradients, model.trainable_variables))
+    #Projected gradients
+    val = tf.where(tf.less(model.lower, model.upper),
                  model.lower, (0.5)*(model.upper + model.lower - model.theta))
 
-	val1 = tf.where(tf.less(model.lower, model.upper),
+    val1 = tf.where(tf.less(model.lower, model.upper),
                  model.upper, (0.5)*(model.upper + model.lower + model.theta))
 
-	model.lower.assign(val)
+    model.lower.assign(val)
 
-	model.upper.assign(val1)
+    model.upper.assign(val1)
+    #tf.print("$$$$$$$$$$$$$$$$PROJECTION$$$$$$$$$$$$$")
 
-	return expected_loglikel, share_loss, responsibilities, gradients
+    model.projection(data, labels, responsibilities, weights, t_range)
+
+    return expected_loglikel + tf.reduce_sum(prior), share_loss #responsibilities, gradients
 
 
 @tf.function
 def train_step_black_box(data, labels_one_hot, samples, weights = None, _lambda = 1.):
-	cross_ent = tf.keras.losses.CategoricalCrossentropy()
-	with tf.GradientTape() as tape:
+    cross_ent = tf.keras.losses.CategoricalCrossentropy()
+    with tf.GradientTape() as tape:
 
-		share_loss = _lambda*black_box.share_loss(X = samples,  sTGMA = model , weights = weights)
-		cross_entropy = cross_ent(labels_one_hot, black_box(data))
+        share_loss = _lambda*black_box.share_loss(X = samples,  sTGMA = model , weights = weights)
+        cross_entropy = cross_ent(labels_one_hot, black_box(data))
 
-		loss = cross_entropy + share_loss
-	gradients = tape.gradient(loss , black_box.trainable_variables)
+        loss = cross_entropy + share_loss + black_box.losses()
+    gradients = tape.gradient(loss , black_box.trainable_variables)
 
-	optimizer_black_box.apply_gradients(zip(gradients, black_box.trainable_variables))
+    optimizer_black_box.apply_gradients(zip(gradients, black_box.trainable_variables))
 
-	return cross_entropy, share_loss, gradients
+    return cross_entropy, share_loss #, gradients
 
 
 @tf.function
-def write_metrics(metrics, values, step):
-  with writer.as_default():
+def write_metrics(writer_use, metrics, values, step):
+  with writer_use.as_default():
 
-    for met, val in zip(metrics, values):
-        tf.summary.scalar(met, val, step=step)
+    for i in range(len(metrics)):
+        tf.summary.scalar(metrics[i], values[i], step=step)
 
 
 if __name__== "__main__":
-
-	np.set_printoptions(precision=5)
-	print("TensorFlow version: {}".format(tf.__version__))
-	print("Eager execution: {}".format(tf.executing_eagerly()))
-	#Setting seeds
-
-    #np.random.seed(903604963)
-	#np.random.seed(1595417368)
-	#seed = np.random.seed(159541736)
-	seed = np.random.seed(112)
-
-	np.random.seed(seed)
-	tf.random.set_seed(seed)
-
-
-
-	#Setting saving metrics and hyperparameters
-	#Hyper-parameters
-	dataset_name = "wine"
-	type_eta = "eta_variant"
-	_lambda = 2.
-	if_pca = False
-	eta = 40.
-    tol = 0.002
-    loss2 = 1000.0
-	n_components = 3
+    # gpus = tf.config.experimental.list_physical_devices('GPU')
+    # if gpus:
+    #     try:
+    #         for gpu in gpus:
+    #             tf.config.experimental.set_memory_growth(gpu, True)
+    #             logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+                
+    #     except RuntimeError as e:
+    #     # Memory growth must be set before GPUs have been initialized
+    #         print(e)
+    converge_bb_before = config_params["converge_before"]
+    np.set_printoptions(precision=5)
+    tfd = tfp.distributions
+    np.random.seed(config_params["seed"])
+    tf.random.set_seed(config_params["seed"])
 
 
-	#Saving metrics
-	save_loss = []
+    print("TensorFlow version: {}".format(tf.__version__))
+    print("Eager execution: {}".format(tf.executing_eagerly()))
 
+
+    n_components = hyper_params["n_components"]
+    save_loss = []
+
+
+    
+    dataset_name = config_params["dataset_name"]
+    type_eta = hyper_params["type_eta"]
+    _lambda = hyper_params["_lambda"]
+
+    X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map = \
+        switch_dataset(dataset_name)(if_PCA = False)
+    model = SoftTruncatedGaussianMixtureAnalysis(n_components = hyper_params["n_components"], data_dim = X_train.shape[1],
+                                                 n_classes = len(np.unique(y_train)), theta = hyper_params["theta"], m_max_min = hyper_params["m_max_min"])
+
+    model.gmm_initialisation(X_train, y_train.astype(np.int32))
+
+    black_box = BlackBoxNN(nb_units = hyper_params["nb_units"], nb_classes =len(np.unique(y_train)))
+    # tf.print(black_box.trainable_variables)
+
+    optimizer_sTGMA = tf.optimizers.Adam(lr = hyper_params["bb_lr"])
+
+    optimizer_black_box = tf.optimizers.Adam(lr = hyper_params["stgma_lr"])
+
+    #exp_log_lik_loss = {}
+    eta = hyper_params["value_eta"]
+    tol = hyper_params["tol"]
+    loss2 = 100000.0
     save_loss1 = []
     save_loss2 = []
     save_share_loss1 = []
@@ -119,40 +151,34 @@ if __name__== "__main__":
 
     list_train_acc_bb = []
     list_train_acc_stgma = []
-    list_fidel_acc = []
+    list_fidel_train = []
 
     list_fidel_test = []
     list_test_acc_bb = []
     list_test_acc_stgma = []
 
-    metrics = ['acc_nn_train', 'acc_nn_test',
-                'acc_stgma_train', 'acc_stgma_test',
-                'fidel_train','fidel_test', 
-                'cross_entropy','share_loss1',
-                'expected_loglikel', 'share_loss2']
+    metrics_train = ['acc_nn', 
+                'acc_stgma', 
+                'fidelity',
+                'cross_entropy_vs_shareloss1',
+                'expected_loglikel_vs_shareloss2']
 
-    #Reading dataset
-	X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map = \
-	    switch_dataset(dataset_name)(if_PCA = if_pca)
-	model = SoftTruncatedGaussianMixtureAnalysis(n_components = n_components, data_dim = X_train.shape[1],
-												 n_classes = len(np.unique(y_train))
+    # metrics_test = ['acc_nn_test', 'acc_stgma_test',
+    # 'fidel_test', 'share_loss1',  'share_loss2'
+    # ]
 
-												 )
+    diff = []
+    directory = f"images_cotraining/datasets/{dataset_name}/components_{n_components}/value_{str(_lambda)}_toto"
 
-
-	model.gmm_initialisation(X_train, y_train.astype(np.int32))
-
-	black_box = BlackBoxNN(nb_units = 128, nb_classes = len(np.unique(y_train)))
-	tf.print(black_box.trainable_variables)
-
-	optimizer_sTGMA = tf.optimizers.Adam(lr = 0.001)
-
-	optimizer_black_box = tf.optimizers.Adam(lr = 0.001)
+    if converge_bb_before:
+        if config_params["weights"]:
+            directory = f"{directory}∕converge_bbb_before_with_weights"
+        else:
+            directory = f"{directory}∕converge_bbb_before"
+    elif config_params["weights"]:
+        directory = f"{directory}∕with_weights"
 
 
-
-	diff = []
-    directory = f"images_cotraining/datasets/{dataset_name}/components_{n_components}"
 
     os.makedirs(directory, exist_ok = True)
     directory = f"{directory}/"
@@ -162,74 +188,208 @@ if __name__== "__main__":
 
     # writer_train = tf.summary.create_file_writer(f"{log_dir}/train")
     # writer_test = tf.summary.create_file_writer(f"{log_dir}/test")
-    writer = tf.summary.create_file_writer(f"{log_dir}")
-	# directory = f"{directory}/value_{eta}"
-
-	#os.makedirs(directory, exist_ok = True)
-	for i in range(50):
-	    #Expectation step
-		if type_eta == "eta_variant":
-			eta = (0.5)*np.sqrt(i) + eta
+    writer_train = tf.summary.create_file_writer(f"{log_dir}/train")
+    writer_test = tf.summary.create_file_writer(f"{log_dir}/test")
 
 
-
-		filename = f"{directory}_{i}.png"
-		responsibilities = model.compute_responsibilities(X_train, y_train.astype(np.int32))
+    # directory = f"{directory}/value_{eta}"
 
 
-	    #Maximization
-		print("Sampling ...")
-		#samples = model.sample_directly(nb_samples = 500).numpy()
-		samples, weights = model.sample_importance(nb_samples = 1000)
-		weights = None
-
-		exp_log_lik_loss[i] = []
-
-		#Learning black-box model
-		for j in range(10):
-			#print(f"Black-box update iteration {j}")
-			loss1, share_loss1, grad = train_step_black_box(data = X_train,
-													  labels_one_hot = y_train_onehot, samples = samples,
-													  weights = weights)
-			loss1, share_loss1 = loss1.numpy(), share_loss1.numpy()
-
-		save_loss1.append(loss1)
-		save_share_loss1.append(share_loss1)
-
-		black_box_labels = np.argmax(black_box(X_train).numpy(), axis = 1)
-
-		#Learning sTGMA
-		for j in range(100):
-
-			loss, share_loss2, resp, grad = train_step_sTGMA(data = X_train, labels = black_box_labels.astype(np.int32),
-									responsibilities = responsibilities, eta = tf.Variable(eta, trainable = False, dtype=tf.float32), samples = samples)
-			loss, share_loss2, resp = loss.numpy(), share_loss2.numpy(), resp.numpy()
-			exp_log_lik_loss[i].append(loss)
+    # dataset = tf.data.Dataset.zip((X_train, y_train_onehot)) 
+    if converge_bb_before:
+        for j in range(50):
+            print(f"Black-box update iteration {j}")
+            loss1, share_loss1 = train_step_black_box(data = X_train,
+                                                      labels_one_hot = y_train_onehot, samples = tf.constant(X_train),
+                                                      weights = None,
+                                                      _lambda = tf.constant(0.))
+            #loss1, share_loss1 = loss1.numpy(), share_loss1.numpy()
 
 
-# =============================================================================
-# 		plot_boundaries_hyperrect(X = X_train,
-# 							   y = y_train,
-# 							   x_axis= 0,
-# 							   y_axis= 1,
-# 							   black_box= black_box,
-# 							   color_map= color_map,
-# 							   file_name = filename,
-# 							   sTGMA= model,
-# 							   steps= 100)
-# =============================================================================
-		save_loss2.append(loss)
-		save_share_loss2.append(share_loss2)
+    for step in range(hyper_params["global_steps"]):
+        #Expectation step
+        if type_eta == "eta_variant":
+            eta = (0.5)*np.sqrt(step) + eta
 
 
 
-		if np.abs(loss2 - loss)/loss2 < tol:
-			break
-		else:
-			diff.append(loss2-loss)
-			loss2 = loss
-		print(f"***** Iteration {i} *****")
-		print(f"loss1: {loss1}, shareloss1: {share_loss1}, loss2: {loss2}, shareloss2: {share_loss2}")
-	#    plot_pdfR(X_train[:,0], X_train[:,1], f"{filename}_density_{i}.png", model, color_map)
+        filename = f"{directory}boundaries_importance_{step}"
+        responsibilities = model.compute_responsibilities(X_train, y_train.astype(np.int32))
 
 
+        #Maximization
+        print("Sampling ...")
+        # samples = model.sample_directly(nb_samples = 500).numpy()
+        # weights = None
+        samples = model.sample_importance(nb_samples = X_train.shape[0]*hyper_params["nb_MC_samples"])
+        weights = None
+
+        #print(weights)
+
+        #exp_log_lik_loss[step] = []
+        
+        #Learning black-box model
+        toc_tic = time()
+
+
+        for j in range(hyper_params["bb_steps"]):
+            print(f"Black-box update iteration {j}")
+            loss1, share_loss1 = train_step_black_box(data = X_train,
+                                                      labels_one_hot = y_train_onehot, samples = samples,
+                                                      weights = weights,
+                                                      _lambda = _lambda)
+            loss1, share_loss1 = loss1.numpy(), share_loss1.numpy()
+
+        save_loss1.append(loss1)
+        save_share_loss1.append(share_loss1)
+
+        black_box_probs = black_box(X_train)
+        black_box_labels = np.argmax(black_box_probs.numpy(), axis = 1)
+
+        if not(config_params["weights"]):
+            black_box_probs = tf.one_hot(black_box_labels, len(np.unique(y_train)))
+
+
+        #Learning sTGMA
+        #tf.print("----Begin----")
+        for j in range(hyper_params["stgma_steps"]):
+
+            loss, share_loss2 = train_step_sTGMA(data = tf.constant(X_train), labels = tf.constant(black_box_labels.astype(np.int32)),
+                                    responsibilities = responsibilities, eta = tf.Variable(eta, trainable = False, dtype=tf.float32), 
+                                    samples = samples, weights = black_box_probs,  
+
+                                    t_range = tf.random.shuffle(tf.range(tf.constant(model.data_dim)), seed=(2^step)*(2*j+1) ))
+
+
+            loss, share_loss2 = loss.numpy(), share_loss2.numpy() #, resp.numpy()
+
+
+        tac_tic = time()
+
+        print(f"Time for iteration {step}: {tac_tic - toc_tic} ")
+
+        #print("---->Projection<----")
+        #model.projection(X_train, responsibilities)
+        #print(model.no_ovelap_test())
+        #print(tf.where(tf.less(model.no_ovelap_test(),0)))
+        #print(model.upper- model.lower)
+            #exp_log_lik_loss[step].append(loss)
+        save_loss2.append(loss)
+        save_share_loss2.append(share_loss2)
+
+
+        y_train_bb = np.argmax(black_box.predict(X_train).numpy(), axis = 1)
+        y_test_bb = np.argmax(black_box.predict(X_test).numpy(), axis = 1)
+        y_train_model = model.predict(X_train).numpy()
+        y_test_model =  model.predict(X_test).numpy()
+
+        train_acc_bb = accuracy_score(y_train, y_train_bb)
+        train_acc_stgma = accuracy_score(y_train, y_train_model)
+
+        test_acc_bb = accuracy_score(y_test, y_test_bb)
+        test_acc_stgma = accuracy_score(y_test, y_test_model)
+
+        test_fidel = accuracy_score(y_test_model, y_test_bb)
+
+        train_fidel = accuracy_score(y_train_model, y_train_bb)
+
+        list_fidel_train.append(train_fidel)
+        list_train_acc_bb.append(train_acc_bb)
+        list_train_acc_stgma.append(train_acc_stgma)
+
+
+        list_fidel_test.append(test_fidel)
+        list_test_acc_bb.append(test_acc_bb)
+        list_test_acc_stgma.append(test_acc_stgma)
+
+        values_train = [train_acc_bb, train_acc_stgma,
+                train_fidel, loss1, 
+                loss]
+        values_test = [test_acc_bb,
+        test_acc_stgma, test_fidel,
+        share_loss1, share_loss2] 
+        
+        write_metrics(writer_test, metrics_train, tf.Variable(values_test, trainable = False), tf.constant(step, tf.int64))
+        write_metrics(writer_train, metrics_train, tf.Variable(values_train, trainable = False), tf.constant(step, tf.int64))
+        
+
+
+        #writer_test.flush()
+        if model.data_dim ==2:
+            plot_boundaries_hyperrect(X = X_train,
+                                   y = y_train,
+                                   x_axis= 0,
+                                   y_axis= 1,
+                                   black_box= black_box,
+                                   color_map= color_map,
+                                   file_name = filename,
+                                   sTGMA= model,
+                                   steps= 100)
+
+
+
+        if np.abs(loss2 - loss)/loss2 < tol and _lambda!=0:
+            break
+        else:
+            diff.append(loss2-loss)
+            loss2 = loss
+        print(f"***** Iteration {step} *****")
+        print(f"loss1: {loss1}, shareloss1: {share_loss1}, loss2: {loss2}, shareloss2: {share_loss2}")
+    #    plot_pdfR(X_train[:,0], X_train[:,1], f"{filename}_density_{i}.png", model, color_map)
+
+        gc.collect()
+        del responsibilities
+        del samples
+
+
+print('----------Training----------')
+print(f"accuracy black box: {train_acc_bb}")
+print(f"accuracy sTGMA: {train_acc_stgma}")
+print(f"Fidelity: {train_fidel}")
+
+print('----------Testing----------')
+print(f"accuracy black box: {test_acc_bb}")
+print(f"accuracy sTGMA: {test_acc_stgma}")
+print(f"Fidelity: {test_fidel}")
+
+
+#plt.gca().set_color_cycle(['red', 'green', 'blue', 'orange'])
+plt.subplot(2, 2, 1)
+plt.plot(save_loss1, color='red', alpha = 0.5)
+plt.plot(save_share_loss1, color='blue', alpha = 0.5)
+plt.title("Loss ANN")
+
+plt.legend(['cross_entropy', 'share_loss1'], loc='upper left')
+
+plt.subplot(2, 2, 2)
+plt.plot(save_loss2)
+plt.legend(['expected_loglikel'], loc='upper left')
+plt.title("STGMA")
+
+plt.subplot(2, 2, 3)
+plt.plot(list_train_acc_bb, color='red', alpha = 0.4)
+plt.plot(list_train_acc_stgma, color='blue', alpha = 0.3)
+plt.plot(list_fidel_train, color='orange', alpha = 0.3)
+plt.title("Training")
+plt.ylim([0.4, 1.])
+plt.legend(['train_acc_bb', 'train_acc_stgma', 'train fidelity'], loc='lower right')
+
+plt.subplot(2, 2, 4)
+plt.plot(list_test_acc_bb, color='red', alpha = 0.4)
+plt.plot(list_test_acc_stgma, color='blue', alpha = 0.3)
+plt.plot(list_fidel_test, color='orange', alpha = 0.3)
+plt.title("Testing")
+plt.legend(['test_acc_bb', 'test_acc_stgma', 'test fidelity'], loc='lower right')
+plt.ylim([0.4, 1.])
+plt.savefig(f'{directory}loss.png')
+plt.close()
+
+print("---Saving model---")
+bb_directory = f"{directory}/bb_weights"
+os.makedirs(bb_directory, exist_ok = True)
+
+stgma_directory = f"{directory}/stgma_weights"
+os.makedirs(stgma_directory, exist_ok = True)
+
+tf.saved_model.save(model, stgma_directory)
+tf.saved_model.save(black_box, bb_directory)
