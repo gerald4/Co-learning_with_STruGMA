@@ -225,7 +225,7 @@ if __name__== "__main__":
     # ]
 
     diff = []
-    directory = f"results/val/{dataset_name}/components_{n_components}_lambda_{str(_lambda)}_toto"
+    directory = f"results/val/{dataset_name}/components_{n_components}_lambda_{str(_lambda)}_lr_Ns"
 
     if converge_bb_before:
         if config_params["weights"]:

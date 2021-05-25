@@ -18,6 +18,7 @@ import numpy as np
 #Preprocessing daset
 
 def preprocess(data, dataset_name, random_state = 111, if_PCA = False, use_classes=False, scale = True):
+    data.to_csv("toto.csv")
 
     #Encode labels
     le = LabelEncoder()
@@ -230,6 +231,8 @@ def read_adult(path = "data_global/adult/", if_PCA = False, number = 0):
     df = df.rename(columns={'Income': 'Class'})
 
     print(df.shape)
+    df = df[[c for c in df if c not in ['Class']] 
+       + ["Class"]]
 
 
     return preprocess(data = df, dataset_name = "adult", if_PCA = if_PCA, random_state=111+number)
@@ -308,11 +311,13 @@ def read_student_performance(path="data_global/student_performance/student-por.c
 
     dataset['G3'] = dataset['G3'].apply(lambda x: 0 if x< 10 else 1)
 
-    dataset = dataset.rename(columns={'G3': 'Class'})
+    data_f = dataset.rename(columns={'G3': 'Class'})
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
 
-    print(dataset.head())
 
-    return preprocess(data = dataset, dataset_name = "student_performance", random_state=111+number, scale = False )
+
+    return preprocess(data = data_f, dataset_name = "student_performance", random_state=111+number, scale = False )
 
 
 
@@ -438,6 +443,192 @@ def read_statlog_satellite(path="data_global/statlog_satellite/statlog_satellite
     return preprocess(data = data, dataset_name = "statlog_satellite", random_state=111+number)
 
 
+def read_german_credit(path="data_global/german_credit/german.data", if_PCA = False, number = 0):
+    dataset=pd.read_csv(path,na_values='?',sep=" ",
+            names=['status_account',"duration_month","credit_history","purpose","credit_amount","savings_account","present_employment_since","installment_rate","personal_status_sex","other_debtors","residence_since","property","age","other_installment_plans","housing","number_of_existing_credits","job","number_people_maintenance",'telephone',"foreign_worker","class"])
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    dataset=dataset.dropna()
+    
+
+    numeric_real=["duration_month","credit_amount","installment_rate","residence_since","age","number_of_existing_credits","number_people_maintenance", "class"]
+
+    mutiva_att=[at for at in list(dataset) if at not in numeric_real]
+
+    for att in mutiva_att:
+        dm1=pd.get_dummies(dataset[att],drop_first=False,prefix=att)
+        dataset=dataset.drop(att,axis=1)
+        dataset=pd.concat([dataset,dm1],axis=1)
+
+    data_f = dataset.rename(columns={'class': 'Class'})
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+
+    return preprocess(data = data_f, dataset_name = "german_credit", random_state=111+number)
+
+def read_heart_disease(path="data_global/heart_disease/processed.cleveland.data", if_PCA = False, number = 0):
+    dataset=pd.read_table(path, delimiter=",",na_values='?',
+            names=['age','sex','cp','trestbps','chol','fbs','restecg','thalach','exang','oldpeak','slope','ca','thal','num'])
+#X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    dataset=dataset.dropna()
+    dataset.loc[dataset.num<1,'num'] = 0
+    dataset.loc[dataset.num>=1,'num'] = 1
+
+
+    numeric_real=['age','trestbps','chol','thalach','oldpeak', "num"]
+
+
+
+    mutiva_att=[ at for at in list(dataset) if at not in numeric_real]
+
+    for att in mutiva_att:
+        dm1=pd.get_dummies(dataset[att],drop_first=False,prefix=att)
+        dataset=dataset.drop(att,axis=1)
+        dataset=pd.concat([dataset,dm1],axis=1)
+
+
+    data_f = dataset.rename(columns={'num': 'Class'})
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+
+    return preprocess(data = data_f, dataset_name = "heart_disease", random_state=111+number)
+
+
+def read_thoracy_surgery(path="data_global/thoracy_surgery/thoracy_surgery.csv", if_PCA = False, number = 0):
+
+    dataset=pd.read_csv(path,na_values='?',sep=",",names=['DGN','FVC','FEV1','Perform.Status','Pain.Before','Hamemoptysis.Before','Dyspnoea.Before','Cough.Before','Weakness.Before','size.Orign.Tumour','Type2.Diabetes','MI_6_Months','Periph.Arte.Disea','Smoking','Asthma','Age','Risky'],index_col=False)
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    dataset=dataset.dropna()
+   
+    numeric_real = ["FVC","FEV1",'Age', "Risky"]
+
+
+
+    mutiva_att=[ at for at in list(dataset) if at not in numeric_real]
+
+    for att in mutiva_att:
+        dm1=pd.get_dummies(dataset[att],drop_first=False,prefix=att)
+        dataset=dataset.drop(att,axis=1)
+        dataset=pd.concat([dataset,dm1],axis=1)
+
+
+    data_f = dataset.rename(columns={'Risky': 'Class'})
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+
+    return preprocess(data = data_f, dataset_name = "thoracy_surgery", random_state=111+number)
+
+
+def read_breast_cancer_wisconsin(path="data_global/breast_cancer/breast-cancer-wisconsin.data", if_PCA = False, number = 0):
+    dataset=pd.read_csv(path,na_values='?',index_col=0,
+            names=['Clump_Thickness',"Uniformity_of_Cell_size","Uniformity_of_Cell_Shape","Marignal_Adhesion","Single_Epithelical_Cell","Bare_Nuclei","Bland_Chromatin","Normal_Nucleoli","Mitoses","Class"])
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    dataset=dataset.dropna()
+
+
+    numeric_real=['Clump_Thickness',"Uniformity_of_Cell_size","Uniformity_of_Cell_Shape","Marignal_Adhesion","Single_Epithelical_Cell","Bare_Nuclei","Bland_Chromatin","Normal_Nucleoli", "Class"]
+
+
+
+    return preprocess(data = dataset, dataset_name = "breast_cancer", random_state=111+number)
+
+def read_dermatology(path="data_global/dermatology/dermatology.data", if_PCA = False, number = 0):
+    dataset=pd.read_csv(path,na_values='?',
+            names=['erythema',"scaling","defenite_borders","itching","koebner_phenomenon","polygonal_papules","follicular_papules","oral_mucosal_involvement","knee_and_elbow_involvement","scalp_involvement","family_history","melanin_incontinence","eosinophils_infiltrate","PNL_infiltrate","fibrosis_papillary_dermis","exocytosis","acanthosis","hyperkeratosis","parakeratosis","clubbing_of_the_rete_ridges","elongation_rete_ridges","thinning_suprapapillary","spongiform_pustule","munro_miscroabcess","focal_hypergranulosis","disapperance_granular_layer","spongiosis","saw_tooth_appearance","follicular_horn_plug","perifollicular_parakeratosis","inflammatory_monoluclear","band-like_infiltrate","age","disease"])
+    #X =np.asarray(dataset.values[:,0:dataset.shape[1]]-1,dtype=np.str)
+    dataset=dataset.dropna()
+
+
+    numeric_real=["age", "disease"]
+
+
+    mutiva_att=list(dataset)
+
+    mutiva_att=[ at for at in list(dataset) if at not in numeric_real]
+
+    for att in mutiva_att:
+        dm1=pd.get_dummies(dataset[att],drop_first=False,prefix=att)
+        dataset=dataset.drop(att,axis=1)
+        dataset=pd.concat([dataset,dm1],axis=1)
+
+
+    data_f = dataset.rename(columns={'disease': 'Class'})
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+
+    return preprocess(data = data_f, dataset_name = "dermatology", random_state=111+number)
+
+def read_winequality_red(path = "data_global/winequality_red/winequality-red.csv", if_PCA=False, number = 0):
+    dataset = pd.read_csv(path, sep=";")
+
+
+    dataset["good quality"] = 0
+    print(dataset.head())
+    dataset.loc[dataset["quality"]>6,"good quality"] = 1
+    dataset=dataset.drop(['quality'],axis=1)
+
+    data_f = dataset.rename(columns={'good quality': 'Class'})
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+    return preprocess(data = data_f, dataset_name = "winequality_red", random_state=111+number)
+
+
+def read_qsar_oral_toxicity(path = "data_global/qsar_oral_toxicity/qsar_oral_toxicity.csv", if_PCA=False, number = 0):
+    dataset = pd.read_csv(path, sep=";", header= None)
+    dataset.columns = [f"feat{i}" for i in range(dataset.shape[1])]
+
+    data_f = dataset.rename(columns={'feat1024': 'Class'})
+
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+    return preprocess(data = data_f, dataset_name = "qsar_biodeg", random_state=111+number)
+
+def read_waveform(path = "data_global/waveform/waveform-+noise.data", if_PCA=False, number = 0):
+    dataset = pd.read_csv(path, sep=",", header= None)
+    dataset.columns = list_feat = [f"feat{i}" for i in range(dataset.shape[1])]
+
+    data_f = dataset.rename(columns={list_feat[-1]: 'Class'})
+
+    data_f = data_f[[c for c in data_f if c not in ['Class']] 
+       + ["Class"]]
+
+    return preprocess(data = data_f, dataset_name = "waveform", random_state=111+number)
+
+def read_credit_card(path = "data_global/credit_card/credit_card.csv", if_PCA=False, number = 0):
+    dataset = pd.read_csv(path, sep=",")
+    #print(list(dataset))
+    dataset['SEX'] = dataset['SEX'].apply(lambda x: 1 if x==2 else 0)
+    educ = pd.get_dummies(dataset['EDUCATION'], prefix = 'EDUCATION')
+    mar = pd.get_dummies(dataset['MARRIAGE'], prefix = 'MARRIAGE')
+    dataset = dataset.drop('MARRIAGE', axis = 1)
+    dataset = dataset.drop('EDUCATION', axis = 1)
+    dataset = pd.concat([dataset, educ, mar], axis = 1)
+    print(dataset.head())
+    data_f = dataset[[c for c in dataset if c not in ['Class']] 
+       + ["Class"]]
+
+    return preprocess(data = data_f, dataset_name = "credit_card", random_state=111+number)
+
+def read_news_popularity(path = "data_global/news_popularity/OnlineNewsPopularity.csv", if_PCA=False, number = 0):
+    dataset = pd.read_csv(path, sep=",")
+    #print(list(dataset))
+    print(dataset.head())
+    print(list(dataset))
+    dataset[' shares'] = dataset[' shares'].apply(lambda x: 0 if x<=1400 else 1)
+
+    dataset = dataset.drop('url', axis = 1)
+    data_f = dataset.rename(columns={" shares": 'Class'})
+    print(dataset.head())
+    data_f = data_f[[c for c in list(data_f) if c not in ['Class']] 
+       + ["Class"]]
+
+    return preprocess(data = data_f, dataset_name = "news_popularity", random_state=111+number)
+
 def switch_dataset(name):
     switcher={
         "wdbc": read_wdbc,
@@ -453,8 +644,17 @@ def switch_dataset(name):
         "magic_gamma": read_magic_gamma,
         "statlog_satellite": read_statlog_satellite,
         "indian_liver": read_indian_liver,
-        "student_performance": read_student_performance
-
+        "student_performance": read_student_performance,
+        "german_credit": read_german_credit,
+        "heart_disease": read_heart_disease,
+        "thoracy_surgery": read_thoracy_surgery,
+        "breast_cancer": read_breast_cancer_wisconsin,
+        "dermatology": read_dermatology,
+        "winequality_red": read_winequality_red,
+        "qsar_oral_toxicity": read_qsar_oral_toxicity,
+	"waveform": read_waveform,
+	"credit_card": read_credit_card,
+    "news_popularity": read_news_popularity
     }
 
     return switcher[name]

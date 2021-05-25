@@ -4,12 +4,12 @@
 
 
 
-#for data in wine magic_gamma ionosphere pima_indian_diabetes ;
+#for data in  magic_gamma ionosphere pima_indian_diabetes ;
 #    do
 #student_performance wine 
-for data in magic_gamma ionosphere pima_indian_diabetes bank_marketing;
+for data in  german_credit wine magic_gamma ionosphere pima_indian_diabetes bank_marketing;
 	do 
-	for K in 2 3;
+	for K in 2 3 4;
 	    do
 		for lambda in 2 5 10;
 		do

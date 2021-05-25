@@ -1,12 +1,14 @@
 
-
 import numpy as np
 import os
 from time import time
 import datetime
 import gc
+import argparse
 
+import pandas as pd
 from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import OneHotEncoder
 from matplotlib import pyplot as plt
 
 import tensorflow.compat.v2 as tf
@@ -58,6 +60,21 @@ if __name__== "__main__":
     #     except RuntimeError as e:
     #     # Memory growth must be set before GPUs have been initialized
     #         print(e)
+
+    parser = argparse.ArgumentParser(description='Parameters')
+
+    parser.add_argument('--dataset_name', help="the name of the dataset", default="wine")
+
+    parser.add_argument("--fold",help="fold", type=int, default=0)
+
+    args = parser.parse_args()
+
+
+    config_params['fold'] = args.fold
+    config_params['dataset_name'] = args.dataset_name
+
+
+
     converge_bb_before = config_params["converge_before"]
     np.set_printoptions(precision=5)
     tfd = tfp.distributions
@@ -78,8 +95,29 @@ if __name__== "__main__":
     type_eta = hyper_params["type_eta"]
     _lambda = hyper_params["_lambda"]
 
-    X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map, _ = \
-        switch_dataset(dataset_name)(if_PCA = False)
+    fold = config_params["fold"] 
+
+    holdout = config_params["type"]
+
+
+    data_train = np.genfromtxt(f'data_global/{dataset_name}/{dataset_name}{holdout}_train_{fold}.csv',delimiter=';')
+
+    data_test = np.genfromtxt(f'data_global/{dataset_name}/{dataset_name}{holdout}_test_{fold}.csv',delimiter=';')
+
+    X_train = data_train[:,:-1].astype(np.float32)
+
+    y_train = data_train[:,-1]
+    onehot = OneHotEncoder()
+    onehot.fit(y_train.astype(np.int32).reshape(-1,1))
+
+    y_train_onehot = onehot.transform(y_train.astype(np.int32).reshape(-1,1)).toarray().astype(np.float32)
+    
+
+    X_test = data_test[:,:-1].astype(np.float32)
+
+    y_test = data_test[:,-1]
+
+    y_test_onehot = onehot.transform(y_test.astype(np.int32).reshape(-1,1)).toarray().astype(np.float32)
 
 
     black_box = BlackBoxNN(nb_units = hyper_params["nb_units"], nb_classes =len(np.unique(y_train)))
@@ -108,7 +146,7 @@ if __name__== "__main__":
     # ]
 
     diff = []
-    directory = f"images_black_box/datasets/{dataset_name}/components_{n_components}/value_{str(_lambda)}"
+    directory = f"images_black_box_NN/datasets_adapt/{dataset_name}_{config_params['fold']}"
 
     if converge_bb_before:
         if config_params["weights"]:
@@ -157,8 +195,8 @@ if __name__== "__main__":
         for j in range(hyper_params["bb_steps"]):
             print(f"Black-box update iteration {j}")
             loss1 = train_step_black_box(data = X_train,
-                                                      labels_one_hot = y_train_onehot, samples = samples,
-                                                      weights = weights,
+                                                      labels_one_hot = y_train_onehot, samples = None,
+                                                      weights = None,
                                                       _lambda = _lambda)
             loss1 = loss1.numpy()#, share_loss1.numpy()
 
@@ -210,7 +248,7 @@ if __name__== "__main__":
 
 
         #writer_test.flush()
-        if model.data_dim ==2:
+        if X_train.shape[0] ==2:
             plot_boundaries_hyperrect(X = X_train,
                                    y = y_train,
                                    x_axis= 0,
@@ -218,15 +256,21 @@ if __name__== "__main__":
                                    black_box= black_box,
                                    color_map= color_map,
                                    file_name = filename,
-                                   sTGMA= model,
+                                   sTGMA= None,
                                    steps= 100)
 
 
 
-        print(f"loss: {loss}")
+        print(f"loss: {loss1}")
     #    plot_pdfR(X_train[:,0], X_train[:,1], f"{filename}_density_{i}.png", model, color_map)
 
         gc.collect()
+
+df = pd.DataFrame({"cross_entropy": save_loss1,
+                    "train_acc_bb": list_train_acc_bb,
+                    "test_acc_bb": list_test_acc_bb}
+                    )
+df.to_csv(f"{directory}/{dataset_name}.csv")
 
 
 print('----------Training----------')
@@ -235,40 +279,25 @@ print(f"accuracy black box: {train_acc_bb}")
 
 print('----------Testing----------')
 print(f"accuracy black box: {test_acc_bb}")
-print(f"accuracy sTGMA: {test_acc_stgma}")
-print(f"Fidelity: {test_fidel}")
+
 
 
 #plt.gca().set_color_cycle(['red', 'green', 'blue', 'orange'])
-plt.subplot(2, 2, 1)
-plt.plot(save_loss1, color='red', alpha = 0.5)
-plt.plot(save_share_loss1, color='blue', alpha = 0.5)
-plt.title("Loss ANN")
 
-plt.legend(['cross_entropy', 'share_loss1'], loc='upper left')
+# plt.subplot(2, 1, 1)
+# plt.plot(list_train_acc_bb, color='red', alpha = 0.4)
+# plt.title("Training")
+# plt.ylim([0.4, 1.])
+# plt.legend(['train_acc_bb'], loc='lower right')
 
-plt.subplot(2, 2, 2)
-plt.plot(save_loss2)
-plt.legend(['expected_loglikel'], loc='upper left')
-plt.title("STGMA")
+# plt.subplot(2, 1, 2)
+# plt.plot(list_test_acc_bb, color='red', alpha = 0.4)
 
-plt.subplot(2, 2, 3)
-plt.plot(list_train_acc_bb, color='red', alpha = 0.4)
-plt.plot(list_train_acc_stgma, color='blue', alpha = 0.3)
-plt.plot(list_fidel_train, color='orange', alpha = 0.3)
-plt.title("Training")
-plt.ylim([0.4, 1.])
-plt.legend(['train_acc_bb', 'train_acc_stgma', 'train fidelity'], loc='lower right')
-
-plt.subplot(2, 2, 4)
-plt.plot(list_test_acc_bb, color='red', alpha = 0.4)
-plt.plot(list_test_acc_stgma, color='blue', alpha = 0.3)
-plt.plot(list_fidel_test, color='orange', alpha = 0.3)
-plt.title("Testing")
-plt.legend(['test_acc_bb', 'test_acc_stgma', 'test fidelity'], loc='lower right')
-plt.ylim([0.4, 1.])
-plt.savefig(f'{directory}loss.png')
-plt.close()
+# plt.title("Testing")
+# plt.legend(['test_acc_bb'], loc='lower right')
+# plt.ylim([0.4, 1.])
+# plt.savefig(f'{directory}loss.png')
+# plt.close()
 
 print("---Saving model---")
 bb_directory = f"{directory}/bb_weights"
@@ -277,5 +306,5 @@ os.makedirs(bb_directory, exist_ok = True)
 stgma_directory = f"{directory}/stgma_weights"
 os.makedirs(stgma_directory, exist_ok = True)
 
-tf.saved_model.save(model, stgma_directory)
+#tf.saved_model.save(model, stgma_directory)
 tf.saved_model.save(black_box, bb_directory)

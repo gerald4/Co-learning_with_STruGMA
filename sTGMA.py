@@ -25,6 +25,7 @@ import matplotlib.cm as cm
 from read_dataset_for_constraint import switch_dataset
 
 from utils import plot_hyperrectangles, plot_pdfR, plot_pdf_hyperrectangles
+from truncated_normal import SoftTruncatedNormal
 
 tfd = tfp.distributions
 
@@ -116,10 +117,11 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
             #print(f"-----components ---->>>>> {np.sum(model.weights_ > 0.01)}")
         self.y_unique = y_unique
 
-    @tf.function    
+    #@tf.function    
     def normalizing_constant(self, way = "independent"):
         """This function computes the normalizing constant which envolves the integral
         """
+        #print("---tracing-normalising")
         if way == "independent":
             # Reconstructing the independent variables
             dict1 = {
@@ -144,7 +146,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
                         axis = - 1, keepdims = True) + self.stable
                   )
 
-
+    #@tf.function
     def compute_log_pdf(self, X, y):
         dist = tfd.Mixture(
           cat = tfp.distributions.Categorical(logits = self.logits_k[y]),
@@ -230,12 +232,12 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
         print(f"Time for sampling: {(tac-tic)/60} min")
         return list_samples
 
-    @tf.function
+    #@tf.function
     def projection(self, X, y, resp, weights, t_range):
 
         #print("toooooooooooooooooooooooooooooooooooooooo")
 
-        @tf.function
+        #@tf.function
         def expec_ll(alpha1, alpha2):#, i, j, c1, c2):
 
             temp_lower = tf.identity(self.lower)
@@ -284,7 +286,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
         #tf.print(tmp_indexes, output_stream="file:///tmp/tensor2.txt")
 
         #tf.print(tf.size(tmp_indexes))
-        print("toto")
+        #print("toto")
         #tf.print(t_range)
 
         while not(tf.equal(tf.size(tmp_indexes), 0)):
@@ -310,7 +312,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
         
 
             for it in tf.range(tf.minimum(tf.constant(self.data_dim), 20)):
-                print("toto")
+                #print("toto")
                 d = t_range[it]
                 #tf.print(self.lower)
                 #print("d loooooop")
@@ -434,13 +436,14 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
             #if not(tf.equal(tf.size(tmp_indexes), 0)):
             #    tf.print(self.no_ovelap_test()[tmp_indexes[0,0], tmp_indexes[0,1]])
             tf.print("number of remaining overlapping: ", tf.size(tmp_indexes))
+            print("number of remaining overlapping: ", tf.size(tmp_indexes))
 
 
             #print("voiciiiiiii")
 
         #tf.print(tmp_indexes)
 
-    @tf.function
+    #@tf.function
     def no_ovelap_test(self):
         low = tf.reshape(self.lower, (self.lower.shape[0]*self.lower.shape[1],)+ (self.lower.shape[2:]))
         
@@ -460,7 +463,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
 
 
 
-    @tf.function
+    #@tf.function
     def sample_importance(self, nb_samples):
         list_samples = []
         list_weights = []
@@ -548,7 +551,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
     def log_pdf(self, X):
         return tf.reduce_logsumexp(self.log_joint_prob(X), axis = -1)
 
-    @tf.function
+    #@tf.function
     def compute_log_conditional_distribution(self, X):
         log_joint_prob = tf.transpose (
             tf.stack(
@@ -590,7 +593,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
             axis = -1
             )
 
-    @tf.function
+    #@tf.function
     def expected_ll (self, X, y, responsibilities, weights):
 
         list_likelihood = tf.TensorArray(dtype =tf.float32, size =0, dynamic_size= True)
@@ -618,7 +621,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
         return - tf.reduce_sum(list_likelihood.stack())
 
 
-    @tf.function
+    #@tf.function
     def __call__(self, X, y, responsabilities, weights):
 
         #Compute expected likelihood per class
@@ -647,7 +650,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
                 )
 
 
-        @tf.function
+        #@tf.function
         def noverlap():
             """This function is not important yet
             It helps to penalize overalapping rectangles"""
@@ -680,7 +683,7 @@ class SoftTruncatedGaussianMixtureAnalysis(tf.Module):
 
 
 
-    @tf.function    
+    #@tf.function    
     def compute_responsibilities(self, X, y):
 
         responsibilities =  tf.TensorArray(dtype =tf.float32, size =0, dynamic_size= True)
