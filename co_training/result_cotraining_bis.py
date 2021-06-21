@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -33,32 +34,52 @@ from tensorboard.plugins.hparams import api as hp
 from read_dataset_for_constraint import switch_dataset
 
 from utils import plot_boundaries_hyperrect
-from sTGMA import SoftTruncatedGaussianMixtureAnalysis
+from STGMA_fast import SoftTruncatedGaussianMixtureAnalysis
 
-from black_box import BlackBoxNN
+from black_box_bis import persoBlackBoxNN
 from config import  config_params, hyper_params
 plt.rcParams["figure.figsize"] = (10,10)
 
 
 
-
+#tf.autograph.set_verbosity(3, True)
 
 
 @tf.function
-def train_step_sTGMA(data, labels, responsibilities, eta, samples, weights, t_range):
-
+def train_step_sTGMA(data, labels, responsibilities, eta, samples, weights, t_range, trainable = tf.constant(False)):
+    print("----Tracing--train_step_sTGMA")
     model.eta.assign(eta)
 
+    @tf.function(input_signature=(tf.TensorSpec(shape=[None, None], dtype=tf.float32),))
+    def share_loss(X):
+        print("----Tracing---share_loss")
+        kl = tf.keras.losses.KLDivergence(
+        reduction=tf.keras.losses.Reduction.SUM)
+
+
+        return tfp.monte_carlo.expectation(
+            f=lambda x_d: kl(
+                tf.exp(
+                    model.compute_log_conditional_distribution(x_d)
+                    ),
+                black_box(x_d, trainable = trainable)
+                ),
+            samples = X,
+            log_prob = model.log_pdf,
+               use_reparametrization= False
+        )
+
     with tf.GradientTape() as tape:
+        #tape.watch(model.trainable_variables)
         expected_loglikel = model(data, labels, responsibilities, weights)
-        share_loss = model.share_loss(X = samples,  black_box_model = black_box )
+        share_loss = share_loss(X = samples)
         loss = expected_loglikel
 
         prior = tfd.Independent(tfd.Normal(loc = model.m_max_min, 
-                    scale =[10.]*model.data_dim), 
+                    scale =10.*tf.ones(model.data_dim)), 
             reinterpreted_batch_ndims=1).log_prob(model.upper) +  tfd.Independent(
-        tfd.Normal(loc = - model.m_max_min, scale =[10.]*model.data_dim), reinterpreted_batch_ndims=1).log_prob(model.lower)
-
+        tfd.Normal(loc = - model.m_max_min, scale =10.*tf.ones(model.data_dim)), reinterpreted_batch_ndims=1).log_prob(model.lower)
+        #tf.print(loss)
     gradients = tape.gradient(loss, model.trainable_variables)
     optimizer_sTGMA.apply_gradients(zip(gradients, model.trainable_variables))
     #Projected gradients
@@ -77,21 +98,72 @@ def train_step_sTGMA(data, labels, responsibilities, eta, samples, weights, t_ra
 
     return expected_loglikel + tf.reduce_sum(prior), share_loss #responsibilities, gradients
 
-
 @tf.function
-def train_step_black_box(data, labels_one_hot, samples, weights = None, _lambda = 1.):
-    cross_ent = tf.keras.losses.CategoricalCrossentropy()
-    with tf.GradientTape() as tape:
+def train_step_black_box(data, labels_one_hot, samples, weights, _lambda ,  trainable = tf.constant(False)):
+    print("----Tracing--train_step_black_box")
 
-        share_loss = _lambda*black_box.share_loss(X = samples,  sTGMA = model , weights = weights)
-        cross_entropy = cross_ent(labels_one_hot, black_box(data))
+    @tf.function
+    def share_loss(X, weights ):
+        print("----Tracing---share_loss")
 
-        loss = cross_entropy + share_loss + black_box.losses()
-    gradients = tape.gradient(loss , black_box.trainable_variables)
+        def kl_divergence(x_d):
+            print("---Tracing the KL")
+            kl = tf.keras.losses.KLDivergence()
+            return kl(
+                tf.exp(
+                    model.compute_log_conditional_distribution(x_d)
+                    ),
+            black_box(x_d, trainable = trainable)
+            )
 
+
+        return tfp.monte_carlo.expectation(
+            f = kl_divergence,
+            samples = X,
+            log_prob = model.log_pdf,
+               use_reparametrization= False
+        )
+
+
+    
+    with tf.GradientTape() as tape1:
+        # share_loss = _lambda*black_box.share_loss(X = samples,  sTGMA = model , weights = weights)
+        # cross_entropy = cross_ent(labels_one_hot, black_box(data))
+
+        # loss = cross_entropy + share_loss + black_box.losses()
+    #gradients = tape.gradient(loss , black_box.trainable_variables)
+
+        print("--tracing-gradient_persistent")
+        #print(samples)
+        #print(weights)
+        #print(black_box(data))
+        share_loss = share_loss(X = samples , weights = weights)
+
+    with tf.GradientTape() as tape2:
+        cross_ent = tf.keras.losses.CategoricalCrossentropy()
+        logits = black_box(data, trainable=tf.constant(True))
+        cross_entropy = cross_ent(labels_one_hot, logits)
+        # loss = cross_entropy + share_loss + black_box.losses()
+    gradients1 = tape1.gradient(share_loss , black_box.trainable_variables)
+    gradients2 = tape2.gradient(cross_entropy, black_box.trainable_variables)
+    #tf.print([grads.shape for grads in gradients1] )
+    #print("tattaataaa")
+    numerator = tf.constant(0.0)
+    denominator = tf.constant(0.0)
+
+    for grads1, grads2 in zip(gradients1, gradients2):
+        numerator = numerator +  tf.reduce_sum(grads2*grads2 - grads1*grads2)
+        denominator = denominator +  tf.norm(grads1 - grads2)**2
+    qiota = 1.-1./(1.+_lambda)
+    tau = tf.math.maximum(tf.math.minimum(numerator/denominator, qiota),0.0)
+    gradients= [ tau*grads1 + (1-tau)*grads2 for grads1, grads2 in zip(gradients1, gradients2)]
+    tf.print("Tau param: ",tau)
     optimizer_black_box.apply_gradients(zip(gradients, black_box.trainable_variables))
 
-    return cross_entropy, share_loss #, gradients
+    del tape1
+    del tape2
+
+    return cross_entropy, share_loss, tau #, gradients
 
 
 @tf.function
@@ -118,9 +190,8 @@ if __name__== "__main__":
 
     parser.add_argument('--dataset_name', help="the name of the dataset", default="wine")
     parser.add_argument("--n_components",help="number of components", type=int, default=3)
-    parser.add_argument('--_lambda', help="lambda", type=int, default=2)
+    parser.add_argument('--_lambda', help="lambda", type=float, default=2)
     parser.add_argument("--fold",help="fold", type=int, default=0)
-    parser.add_argument("--type",help="holdout or nothing", type=str, default="_holdout")
 
     args = parser.parse_args()
 
@@ -128,9 +199,6 @@ if __name__== "__main__":
     config_params['fold'] = args.fold
     config_params['dataset_name'] = args.dataset_name
     hyper_params['_lambda'] = args._lambda
-
-    config_params["type"] = args.type
-
 
     converge_bb_before = config_params["converge_before"]
     np.set_printoptions(precision=5)
@@ -158,9 +226,11 @@ if __name__== "__main__":
 
     holdout = config_params["type"]
 
+    print(f"Dataset: {dataset_name}, lambda: {_lambda}, n_components: {n_components}")
+
     data_train = np.genfromtxt(f'data_global/{dataset_name}/{dataset_name}{holdout}_train_{fold}.csv',delimiter=';')
 
-    data_test = np.genfromtxt(f'data_global/{dataset_name}/{dataset_name}{holdout}_val_{fold}.csv',delimiter=';')
+    data_test = np.genfromtxt(f'data_global/{dataset_name}/{dataset_name}{holdout}_test_{fold}.csv',delimiter=';')
 
     X_train = data_train[:,:-1].astype(np.float32)
 
@@ -177,8 +247,6 @@ if __name__== "__main__":
 
     y_test_onehot = onehot.transform(y_test.astype(np.int32).reshape(-1,1)).toarray().astype(np.float32)
 
-
-
     # X_train, y_train, X_val, y_val, X_test, y_test, y_train_onehot, y_val_onehot, y_test_onehot, scaler, color_map = \
     #     switch_dataset(dataset_name)(if_PCA = False)
 
@@ -187,9 +255,10 @@ if __name__== "__main__":
 
     model.gmm_initialisation(X_train, y_train.astype(np.int32))
 
-    black_box = BlackBoxNN(nb_units = hyper_params["nb_units"], nb_classes =len(np.unique(y_train)))
-    # tf.print(black_box.trainable_variables)
+    black_box = persoBlackBoxNN(nb_units = hyper_params["nb_units"], nb_classes =len(np.unique(y_train)), dataset_name = dataset_name, data_dim = X_train.shape[1])
 
+    # tf.print(black_box.trainable_variables)
+    _ = black_box(tf.constant(X_train[0:2]), trainable = tf.constant(True))
     optimizer_sTGMA = tf.optimizers.Adam(lr = hyper_params["bb_lr"])
 
     optimizer_black_box = tf.optimizers.Adam(lr = hyper_params["stgma_lr"])
@@ -200,6 +269,7 @@ if __name__== "__main__":
     loss2 = 100000.0
     save_loss1 = []
     save_loss2 = []
+
     save_share_loss1 = []
     save_share_loss2 = []
 
@@ -213,6 +283,7 @@ if __name__== "__main__":
     list_test_acc_bb = []
     list_test_acc_stgma = []
 
+    save_tau = []
     metrics_train = ['acc_nn', 
                 'acc_stgma', 
                 'fidelity',
@@ -225,7 +296,7 @@ if __name__== "__main__":
     # ]
 
     diff = []
-    directory = f"results/val/{dataset_name}/components_{n_components}_lambda_{str(_lambda)}_lr_Ns"
+    directory = f"results/holdout/{dataset_name}/components_{n_components}_lambda_{str(_lambda)}_lr_Ns_adapt_bis"
 
     if converge_bb_before:
         if config_params["weights"]:
@@ -238,10 +309,15 @@ if __name__== "__main__":
 
 
     os.makedirs(directory, exist_ok = True)
+    directory = f"{directory}/fold_{fold}"
+    os.makedirs(directory, exist_ok = True)
+    
     directory = f"{directory}/"
 
     log_dir = f"{directory}/logs"
     os.makedirs(log_dir, exist_ok = True)
+
+
 
     # writer_train = tf.summary.create_file_writer(f"{log_dir}/train")
     # writer_test = tf.summary.create_file_writer(f"{log_dir}/test")
@@ -256,7 +332,7 @@ if __name__== "__main__":
     if converge_bb_before:
         for j in range(50):
             print(f"Black-box update iteration {j}")
-            loss1, share_loss1 = train_step_black_box(data = X_train,
+            loss1, share_loss1, _ = train_step_black_box(data = X_train,
                                                       labels_one_hot = y_train_onehot, samples = tf.constant(X_train),
                                                       weights = None,
                                                       _lambda = tf.constant(0.))
@@ -278,8 +354,8 @@ if __name__== "__main__":
         print("Sampling ...")
         # samples = model.sample_directly(nb_samples = 500).numpy()
         # weights = None
-        samples = model.sample_importance(nb_samples = X_train.shape[0]*hyper_params["nb_MC_samples"])
-        weights = None
+        samples = model.sample_importance(nb_samples = tf.constant(X_train.shape[0]*hyper_params["nb_MC_samples"], dtype = tf.float32))
+        weights = 1
 
         #print(weights)
 
@@ -288,16 +364,17 @@ if __name__== "__main__":
         #Learning black-box model
         for j in range(hyper_params["bb_steps"]):
             print(f"Black-box update iteration {j}")
-            loss1, share_loss1 = train_step_black_box(data = X_train,
-                                                      labels_one_hot = y_train_onehot, samples = samples,
-                                                      weights = weights,
-                                                      _lambda = _lambda)
-            loss1, share_loss1 = loss1.numpy(), share_loss1.numpy()
+            loss1, share_loss1, tau = train_step_black_box(data = tf.constant(X_train),
+                                                      labels_one_hot = tf.constant(y_train_onehot), samples = tf.constant(samples),
+                                                      weights = tf.constant(weights),
+                                                      _lambda = tf.constant(_lambda))
+            loss1, share_loss1, tau = loss1.numpy(), share_loss1.numpy(), tau.numpy()
 
+        save_tau.append(tau)
         save_loss1.append(loss1)
         save_share_loss1.append(share_loss1)
 
-        black_box_probs = black_box(X_train)
+        black_box_probs = black_box(X_train, trainable = tf.constant(False))
         black_box_labels = np.argmax(black_box_probs.numpy(), axis = 1)
 
         if not(config_params["weights"]):
@@ -307,13 +384,16 @@ if __name__== "__main__":
         #Learning sTGMA
         #tf.print("----Begin----")
         for j in range(hyper_params["stgma_steps"]):
-
+            #print("Iteration sTGMA: ", j)
+            toc = time()
+            #print(X_train.shape,black_box_labels.astype(np.int32).shape, responsibilities.shape, samples.shape, black_box_probs.shape,  tf.random.shuffle(tf.range(model.data_dim), seed=(2^step)*(2*j+1) ))
             loss, share_loss2 = train_step_sTGMA(data = tf.constant(X_train), labels = tf.constant(black_box_labels.astype(np.int32)),
-                                    responsibilities = responsibilities, eta = tf.Variable(eta, trainable = False, dtype=tf.float32), 
-                                    samples = samples, weights = black_box_probs,  
+                                    responsibilities = tf.constant(responsibilities), eta = tf.constant(eta, dtype=tf.float32), 
+                                    samples = tf.constant(samples), weights = tf.constant(black_box_probs),  
 
-                                    t_range = tf.random.shuffle(tf.range(tf.constant(model.data_dim)), seed=(2^step)*(2*j+1) ))
-
+                                    t_range = tf.random.shuffle(tf.range(model.data_dim), seed=(2^step)*(2*j+1) ))
+            toca = time()
+            #print(toca-toc)
             loss, share_loss2 = loss.numpy(), share_loss2.numpy() #, resp.numpy()
 
         #print("---->Projection<----")
@@ -326,8 +406,8 @@ if __name__== "__main__":
         save_share_loss2.append(share_loss2)
 
 
-        y_train_bb = np.argmax(black_box.predict(X_train).numpy(), axis = 1)
-        y_test_bb = np.argmax(black_box.predict(X_test).numpy(), axis = 1)
+        y_train_bb = np.argmax(black_box.predict(X_train, trainable = tf.constant(True)).numpy(), axis = 1)
+        y_test_bb = np.argmax(black_box.predict(X_test, trainable = tf.constant(False)).numpy(), axis = 1)
         y_train_model = model.predict(X_train).numpy()
         y_test_model =  model.predict(X_test).numpy()
 
@@ -362,13 +442,16 @@ if __name__== "__main__":
         test_acc_stgma, test_fidel, test_nmi,
         share_loss1, share_loss2] 
         
-        write_metrics(writer_test, metrics_train, tf.Variable(values_test, trainable = False), tf.constant(step, tf.int64))
-        write_metrics(writer_train, metrics_train, tf.Variable(values_train, trainable = False), tf.constant(step, tf.int64))
+        write_metrics(writer_test, metrics_train, tf.constant(values_test), tf.constant(step, tf.int64))
+        write_metrics(writer_train, metrics_train, tf.constant(values_train), tf.constant(step, tf.int64))
         
 
 
         #writer_test.flush()
         if model.data_dim ==2:
+            print("Surprise_data_dim")
+            color_map = {-1: (1, 1, 1), 0: "blue", 1: "red", 2: "green", 3: "yellow", 4: "orange", 5: "purple",
+            6: "brown", 7: "pink", 8: "gray", 9: "olive", 10: "cyan" }
             plot_boundaries_hyperrect(X = X_train,
                                    y = y_train,
                                    x_axis= 0,
@@ -382,7 +465,27 @@ if __name__== "__main__":
 
 
         if np.abs(loss2 - loss)/loss2 < tol and _lambda!=0:
-            break
+            bb_directory = f"{directory}/bb_weights_converged"
+            os.makedirs(bb_directory, exist_ok = True)
+
+            stgma_directory = f"{directory}/stgma_weights_converged"
+            os.makedirs(stgma_directory, exist_ok = True)
+
+            tf.saved_model.save(model, stgma_directory)
+            tf.saved_model.save(black_box, bb_directory)
+            pd.DataFrame({"cross_entropy": save_loss1,
+                    "shareloss1": save_share_loss1,
+                    "shareloss2": save_share_loss2,
+                    "expected_loglikel": save_loss2,
+                    "train_acc_bb": list_train_acc_bb,
+                    "test_acc_bb": list_test_acc_bb,
+                    "train_acc_stgma": list_train_acc_stgma,
+                    "test_acc_stgma": list_test_acc_stgma,
+                    "train_fidel": list_fidel_train,
+                    "test_fidel": list_fidel_test,
+                    "train_nmi": list_nmi_train,
+                    "test_nmi": list_nmi_test,
+                    "tau": save_tau}).to_csv(f"{directory}/{dataset_name}_{str(_lambda)}_{str(n_components)}_holdout_converged_adapt.csv")
         else:
             diff.append(loss2-loss)
             loss2 = loss
@@ -406,8 +509,19 @@ df = pd.DataFrame({"cross_entropy": save_loss1,
                     "train_fidel": list_fidel_train,
                     "test_fidel": list_fidel_test,
                     "train_nmi": list_nmi_train,
-                    "test_nmi": list_nmi_test})
-df.to_csv(f"{directory}/{dataset_name}_{str(_lambda)}_{str(n_components)}_val.csv")
+                    "test_nmi": list_nmi_test,
+                    "tau": save_tau})
+df.to_csv(f"{directory}/{dataset_name}_{str(_lambda)}_{str(n_components)}_holdout.csv")
+
+print("---Saving model---")
+bb_directory = f"{directory}/bb_weights"
+os.makedirs(bb_directory, exist_ok = True)
+
+stgma_directory = f"{directory}/stgma_weights"
+os.makedirs(stgma_directory, exist_ok = True)
+
+tf.saved_model.save(model, stgma_directory)
+tf.saved_model.save(black_box, bb_directory)
 
 print('----------Training----------')
 print(f"accuracy black box: {train_acc_bb}")
@@ -437,26 +551,19 @@ plt.subplot(2, 2, 3)
 plt.plot(list_train_acc_bb, color='red', alpha = 0.4)
 plt.plot(list_train_acc_stgma, color='blue', alpha = 0.3)
 plt.plot(list_fidel_train, color='orange', alpha = 0.3)
+plt.plot(list_nmi_train, color='green', alpha = 0.3)
 plt.title("Training")
 plt.ylim([0.4, 1.])
-plt.legend(['train_acc_bb', 'train_acc_stgma', 'train fidelity'], loc='lower right')
+plt.legend(['train_acc_bb', 'train_acc_stgma', 'train fidelity','nmi_train'], loc='lower right')
 
 plt.subplot(2, 2, 4)
 plt.plot(list_test_acc_bb, color='red', alpha = 0.4)
 plt.plot(list_test_acc_stgma, color='blue', alpha = 0.3)
 plt.plot(list_fidel_test, color='orange', alpha = 0.3)
+plt.plot(list_nmi_test, color='green', alpha = 0.3)
 plt.title("Testing")
-plt.legend(['test_acc_bb', 'test_acc_stgma', 'test fidelity'], loc='lower right')
+plt.legend(['test_acc_bb', 'test_acc_stgma', 'test fidelity', 'nmi_test'], loc='lower right')
 plt.ylim([0.4, 1.])
 plt.savefig(f'{directory}loss.png')
 plt.close()
 
-print("---Saving model---")
-bb_directory = f"{directory}/bb_weights"
-os.makedirs(bb_directory, exist_ok = True)
-
-stgma_directory = f"{directory}/stgma_weights"
-os.makedirs(stgma_directory, exist_ok = True)
-
-tf.saved_model.save(model, stgma_directory)
-tf.saved_model.save(black_box, bb_directory)
